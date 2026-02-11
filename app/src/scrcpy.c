@@ -29,6 +29,9 @@
 #include "uhid/gamepad_uhid.h"
 #include "uhid/keyboard_uhid.h"
 #include "uhid/mouse_uhid.h"
+#include "shm_sink.h"
+#include "api_server.h"
+#include "overlay.h"
 #ifdef HAVE_USB
 # include "usb/aoa_hid.h"
 # include "usb/gamepad_aoa.h"
@@ -59,6 +62,9 @@ struct scrcpy {
     struct sc_v4l2_sink v4l2_sink;
     struct sc_delay_buffer v4l2_buffer;
 #endif
+    struct sc_shm_sink shm_sink;
+    struct sc_overlay overlay;
+    struct sc_api_server api_server;
     struct sc_controller controller;
     struct sc_file_pusher file_pusher;
 #ifdef HAVE_USB
@@ -414,6 +420,10 @@ scrcpy(struct scrcpy_options *options) {
     bool controller_initialized = false;
     bool controller_started = false;
     bool screen_initialized = false;
+    bool shm_sink_initialized = false;
+    bool overlay_initialized = false;
+    bool api_server_initialized = false;
+    bool api_server_started = false;
     bool timeout_initialized = false;
     bool timeout_started = false;
 
@@ -589,7 +599,7 @@ scrcpy(struct scrcpy_options *options) {
                         &audio_demuxer_cbs, options);
     }
 
-    bool needs_video_decoder = options->video_playback;
+    bool needs_video_decoder = options->video_playback || options->shm_name;
     bool needs_audio_decoder = options->audio_playback;
 #ifdef HAVE_V4L2
     needs_video_decoder |= !!options->v4l2_device;
@@ -830,7 +840,41 @@ aoa_complete:
             goto end;
         }
         screen_initialized = true;
+    }
 
+    if (options->shm_name) {
+        if (sc_shm_sink_init(&s->shm_sink, options->shm_name)) {
+            shm_sink_initialized = true;
+            sc_frame_source_add_sink(&s->video_decoder.frame_source,
+                                     &s->shm_sink.frame_sink);
+        } else {
+            LOGW("Could not initialize shared memory sink");
+        }
+    }
+
+    if (options->api_socket) {
+        if (sc_overlay_init(&s->overlay)) {
+            overlay_initialized = true;
+            if (screen_initialized) {
+                s->screen.overlay = &s->overlay;
+            }
+            if (sc_api_server_init(&s->api_server, options->api_socket,
+                                   controller, &s->overlay, &s->screen)) {
+                api_server_initialized = true;
+                if (sc_api_server_start(&s->api_server)) {
+                    api_server_started = true;
+                } else {
+                    LOGW("Could not start API server");
+                }
+            } else {
+                LOGW("Could not initialize API server");
+            }
+        } else {
+            LOGW("Could not initialize overlay");
+        }
+    }
+
+    if (options->window) {
         if (options->video_playback) {
             struct sc_frame_source *src = &s->video_decoder.frame_source;
             if (options->video_buffer) {
@@ -989,6 +1033,9 @@ end:
     if (recorder_initialized) {
         sc_recorder_stop(&s->recorder);
     }
+    if (api_server_started) {
+        sc_api_server_stop(&s->api_server);
+    }
     if (screen_initialized) {
         sc_screen_interrupt(&s->screen);
     }
@@ -1037,6 +1084,16 @@ end:
     if (screen_initialized) {
         sc_screen_join(&s->screen);
         sc_screen_destroy(&s->screen);
+    }
+
+    if (api_server_initialized) {
+        sc_api_server_destroy(&s->api_server);
+    }
+    if (overlay_initialized) {
+        sc_overlay_destroy(&s->overlay);
+    }
+    if (shm_sink_initialized) {
+        sc_shm_sink_destroy(&s->shm_sink);
     }
 
     if (controller_started) {

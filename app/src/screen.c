@@ -216,6 +216,11 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
     enum sc_display_result res =
         sc_display_render(&screen->display, &screen->rect, screen->orientation);
     (void) res; // any error already logged
+
+    if (screen->overlay) {
+        sc_overlay_render(screen->overlay, screen->display.renderer,
+                          &screen->rect);
+    }
 }
 
 static void
@@ -335,6 +340,7 @@ sc_screen_init(struct sc_screen *screen,
     screen->orientation = SC_ORIENTATION_0;
 
     screen->video = params->video;
+    screen->overlay = NULL;
 
     screen->req.x = params->window_x;
     screen->req.y = params->window_y;

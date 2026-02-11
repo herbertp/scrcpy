@@ -7,6 +7,7 @@
 
 #include "android/input.h"
 #include "android/keycodes.h"
+#include "events.h"
 #include "input_events.h"
 #include "screen.h"
 #include "shortcut_mod.h"
@@ -46,6 +47,7 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->key_repeat = 0;
 
     im->next_sequence = 1; // 0 is reserved for SC_SEQUENCE_INVALID
+    im->block_input = false;
 }
 
 static void
@@ -1015,6 +1017,13 @@ sc_input_manager_process_file(struct sc_input_manager *im,
 void
 sc_input_manager_handle_event(struct sc_input_manager *im,
                               const SDL_Event *event) {
+    if (im->block_input) {
+        // Still allow quit and some special events
+        if (event->type != SDL_QUIT && event->type != SC_EVENT_RUN_ON_MAIN_THREAD) {
+            return;
+        }
+    }
+
     bool control = im->controller;
     bool paused = im->screen->paused;
     switch (event->type) {

@@ -17,6 +17,7 @@
 #include "frame_buffer.h"
 #include "input_manager.h"
 #include "mouse_capture.h"
+#include "overlay.h"
 #include "options.h"
 #include "trait/key_processor.h"
 #include "trait/frame_sink.h"
@@ -34,6 +35,7 @@ struct sc_screen {
     struct sc_display display;
     struct sc_input_manager im;
     struct sc_mouse_capture mc; // only used in mouse relative mode
+    struct sc_overlay *overlay;
     struct sc_frame_buffer fb;
     struct sc_fps_counter fps_counter;
 
