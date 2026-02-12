@@ -3,7 +3,7 @@ import json
 import time
 import sys
 import struct
-from multiprocessing import shared_memory
+from multiprocessing import shared_memory, resource_tracker
 
 def main():
     shm_name = "scrcpy_shm"
@@ -21,6 +21,12 @@ def main():
     print(f"Connecting to SHM: {shm_name}")
     try:
         shm = shared_memory.SharedMemory(name=name_for_py)
+        # IMPORTANT: Unregister from resource_tracker to prevent unlinking on exit.
+        # Python's SharedMemory often unlinks the segment even if it didn't create it.
+        try:
+            resource_tracker.unregister(shm._name, "shared_memory")
+        except Exception as e:
+            print(f"Note: Could not unregister SHM from resource tracker: {e}")
     except FileNotFoundError:
         print(f"SHM {shm_name} not found. Is scrcpy running with --shm-name={shm_name}?")
         return
@@ -38,7 +44,7 @@ def main():
     try:
         # Header format: 4u32 (width, height, format, size), 1u64 (pts), 1u32 (sequence)
         # Total size: 4*4 + 8 + 4 = 28 bytes
-        header_size = 28
+        # Using struct.unpack_from to avoid creating memoryview slices that cause BufferError
 
         last_sequence = -1
 
@@ -59,20 +65,17 @@ def main():
 
         start_time = time.time()
         while time.time() - start_time < 10:
-            header_data = shm.buf[:header_size]
-            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", header_data)
+            # width, height, fmt, data_size, pts, sequence
+            width, height, fmt, data_size, pts, sequence = struct.unpack_from("IIIIQI", shm.buf, 0)
 
             if sequence != last_sequence:
+                if last_sequence != -1:
+                    print(f"Frame: {width}x{height}, format={fmt}, pts={pts}, seq={sequence}")
                 last_sequence = sequence
-                print(f"Frame: {width}x{height}, format={fmt}, pts={pts}, seq={sequence}")
-
-                # Move a red circle around
-                angle = (time.time() * 2) % 6.28
-                cx = 5000 + int(3000 * 0.5 * (1 + 0.5 * (angle))) # just some motion
-                cx = 5000 + int(2000 * (angle / 6.28)) # linear motion for simplicity
 
                 # Clear and add new circle and text
                 send_cmd({"type": "overlay_clear"})
+                # Use 'radius' instead of 'r' to avoid key collision
                 send_cmd({
                     "type": "overlay_add",
                     "item": {"type": "circle", "x": 5000 + int(2000 * (time.time() % 2 - 1)), "y": 5000, "radius": 500, "r": 255, "g": 0, "b": 0, "a": 255}
@@ -86,7 +89,7 @@ def main():
                      # Unblock after 3 seconds
                      send_cmd({"type": "block_input", "value": False})
 
-            time.sleep(0.1)
+            time.sleep(0.01) # Poll faster for better responsiveness
 
     except KeyboardInterrupt:
         pass
