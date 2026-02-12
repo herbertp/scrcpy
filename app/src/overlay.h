@@ -35,6 +35,8 @@ struct sc_overlay_item {
         } text;
     };
     uint8_t r, g, b, a;
+    uint8_t thickness;
+    bool filled;
 };
 
 struct sc_overlay {

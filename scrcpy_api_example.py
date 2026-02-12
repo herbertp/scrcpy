@@ -6,6 +6,10 @@ import struct
 import os
 from multiprocessing import shared_memory, resource_tracker
 
+# Constants from android/keycodes.h
+AKEYCODE_HOME = 3
+AKEYCODE_BACK = 4
+
 def save_ppm(width, height, yuv_data, filename):
     """Saves a YUV420P frame as a PPM file (RGB)."""
     y_size = width * height
@@ -31,14 +35,9 @@ def save_ppm(width, height, yuv_data, filename):
             g = (298 * c - 100 * d - 208 * e + 128) >> 8
             b = (298 * c + 516 * d + 128) >> 8
 
-            r = max(0, min(255, r))
-            g = max(0, min(255, g))
-            b = max(0, min(255, b))
-
-            idx = (j * width + i) * 3
-            rgb[idx] = r
-            rgb[idx+1] = g
-            rgb[idx+2] = b
+            rgb[(j * width + i) * 3] = max(0, min(255, r))
+            rgb[(j * width + i) * 3 + 1] = max(0, min(255, g))
+            rgb[(j * width + i) * 3 + 2] = max(0, min(255, b))
 
     with open(filename, "wb") as f:
         f.write(f"P6\n{width} {height}\n255\n".encode())
@@ -83,26 +82,30 @@ def main():
 
         print("Starting main loop. Press Ctrl+C to stop.")
 
-        send_cmd({"type": "overlay_clear"})
-        send_cmd({"type": "block_input", "value": True})
+        # Test input injection
+        print("Injecting HOME button...")
+        send_cmd({"type": "inject_keycode", "action": "down", "keycode": AKEYCODE_HOME})
+        send_cmd({"type": "inject_keycode", "action": "up", "keycode": AKEYCODE_HOME})
 
-        send_cmd({
-            "type": "overlay_add",
-            "item": {"type": "rect", "x": 1000, "y": 1000, "w": 8000, "h": 8000, "r": 0, "g": 0, "b": 255, "a": 64}
-        })
+        time.sleep(1)
+
+        print("Injecting touch click at (5000, 5000)...")
+        send_cmd({"type": "inject_touch", "action": "down", "x": 5000, "y": 5000})
+        send_cmd({"type": "inject_touch", "action": "up", "x": 5000, "y": 5000})
+
+        time.sleep(1)
+
+        print("Injecting text 'Hello Scrcpy'...")
+        send_cmd({"type": "inject_text", "text": "Hello Scrcpy"})
 
         frame_saved = False
         start_time = time.time()
         while time.time() - start_time < 10:
-            # Explicitly manage memoryview to avoid BufferError on close()
             buf = shm.buf
             header_data = bytes(buf[:header_size])
             width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", header_data)
 
             if sequence != last_sequence:
-                if last_sequence != -1:
-                    print(f"Frame: {width}x{height}, format={fmt}, pts={pts}, seq={sequence}")
-
                 if not frame_saved and data_size > 0:
                     yuv_data = bytes(buf[header_size:header_size + data_size])
                     save_ppm(width, height, yuv_data, "frame.ppm")
@@ -110,29 +113,34 @@ def main():
 
                 last_sequence = sequence
 
+                # Test new overlay features: thick lines and filled shapes
                 send_cmd({"type": "overlay_clear"})
+
+                # Filled background rectangle
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "rect", "x": 1000, "y": 1000, "w": 8000, "h": 8000, "r": 0, "g": 0, "b": 255, "a": 64}
+                    "item": {"type": "rect", "x": 500, "y": 500, "w": 9000, "h": 2000, "r": 50, "g": 50, "b": 50, "a": 180, "filled": True}
                 })
+
+                # Thick green line
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "circle", "x": 5000 + int(2000 * (time.time() % 2 - 1)), "y": 5000, "radius": 500, "r": 255, "g": 0, "b": 0, "a": 255}
+                    "item": {"type": "line", "x1": 1000, "y1": 1000, "x2": 9000, "y2": 1000, "r": 0, "g": 255, "b": 0, "a": 255, "thickness": 10}
                 })
+
+                # Better text rendering
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "text", "x": 100, "y": 100, "size": 3, "text": f"Seq: {sequence} PTS: {pts}", "r": 255, "g": 255, "b": 0, "a": 255}
+                    "item": {"type": "text", "x": 1000, "y": 1200, "size": 4, "text": f"STATUS: OK | SEQ: {sequence}", "r": 255, "g": 255, "b": 255, "a": 255}
                 })
 
-                if time.time() - start_time > 3:
-                     send_cmd({"type": "block_input", "value": False})
+                # Filled red circle
+                send_cmd({
+                    "type": "overlay_add",
+                    "item": {"type": "circle", "x": 5000, "y": 5000, "radius": 500, "r": 255, "g": 0, "b": 0, "a": 128, "filled": True}
+                })
 
-            # In some Python versions, buf might keep a reference even after this loop.
-            # But here buf is local to the loop.
-            # To be absolutely sure, we can do:
-            # del buf
-
-            time.sleep(0.01)
+            time.sleep(0.02)
 
     except KeyboardInterrupt:
         pass
@@ -140,11 +148,8 @@ def main():
         print("Cleaning up...")
         try:
             send_cmd({"type": "overlay_clear"})
-            send_cmd({"type": "block_input", "value": False})
         except:
             pass
-        # Give some time for GC if needed
-        time.sleep(0.1)
         shm.close()
 
 if __name__ == "__main__":

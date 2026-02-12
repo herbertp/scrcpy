@@ -74,6 +74,14 @@ process_command(struct sc_api_server *api, const char *json_str) {
 
             ok = api->controller && sc_controller_push_msg(api->controller, &msg);
         }
+    } else if (strcmp(type->valuestring, "inject_text") == 0) {
+        cJSON *text = cJSON_GetObjectItemCaseSensitive(json, "text");
+        if (cJSON_IsString(text)) {
+            struct sc_control_msg msg;
+            msg.type = SC_CONTROL_MSG_TYPE_INJECT_TEXT;
+            msg.inject_text.text = strdup(text->valuestring);
+            ok = api->controller && sc_controller_push_msg(api->controller, &msg);
+        }
     } else if (strcmp(type->valuestring, "overlay_add") == 0) {
         cJSON *item_json = cJSON_GetObjectItemCaseSensitive(json, "item");
         if (cJSON_IsObject(item_json)) {
@@ -88,6 +96,12 @@ process_command(struct sc_api_server *api, const char *json_str) {
             item.g = cJSON_IsNumber(g) ? g->valueint : 255;
             item.b = cJSON_IsNumber(b) ? b->valueint : 255;
             item.a = cJSON_IsNumber(a) ? a->valueint : 255;
+
+            cJSON *thickness = cJSON_GetObjectItemCaseSensitive(item_json, "thickness");
+            item.thickness = cJSON_IsNumber(thickness) ? thickness->valueint : 1;
+
+            cJSON *filled = cJSON_GetObjectItemCaseSensitive(item_json, "filled");
+            item.filled = cJSON_IsBool(filled) ? cJSON_IsTrue(filled) : false;
 
             if (strcmp(itype->valuestring, "line") == 0) {
                 item.type = SC_OVERLAY_TYPE_LINE;

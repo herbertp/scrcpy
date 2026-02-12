@@ -137,6 +137,7 @@ if host_machine.system() == 'windows'
     dependencies += cc.find_library('ws2_32')
 else
     dependencies += cc.find_library('rt', required: false)
+    dependencies += cc.find_library('m', required: false)
 endif
 
 check_functions = [
