@@ -19,12 +19,14 @@ struct sc_shm_slot_meta {
     uint32_t size;
     uint64_t pts;
     uint32_t sequence;
+    uint32_t reserved; // Padding to 32 bytes
 };
 
 struct sc_shm_header {
     uint32_t latest_index;
     uint32_t num_slots;
     uint32_t slot_data_size; // Aligned to 4k
+    uint32_t reserved; // Padding to 16 bytes, slots[] starts at offset 16
     struct sc_shm_slot_meta slots[SC_SHM_SLOTS];
 };
 

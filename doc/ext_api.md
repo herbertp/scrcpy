@@ -8,7 +8,7 @@ Enable with `--shm-name=<name>`.
 
 ### Segment Layout
 
-The segment is organized into a 4KB header (Page 0) followed by 3 page-aligned slots starting at Page 1 (offset 4096).
+The segment is organized into a 4KB header (Page 0) containing all metadata, followed by 3 page-aligned data slots starting at Page 1 (offset 4096).
 
 #### Page 0: Global Header & Metadata
 | Offset | Type | Name | Description |
@@ -16,9 +16,10 @@ The segment is organized into a 4KB header (Page 0) followed by 3 page-aligned s
 | 0 | `uint32_t` | `latest_index` | Index of the most recently completed frame (0, 1, or 2). |
 | 4 | `uint32_t` | `num_slots` | Always `3`. |
 | 8 | `uint32_t` | `slot_data_size` | Size of raw data in one slot, 4KB aligned. |
-| 12 | `struct[]` | `slots` | Array of 3 `sc_shm_slot_meta` structures. |
+| 12 | `uint32_t` | `reserved` | Padding to ensure `slots` starts at offset 16. |
+| 16 | `struct[]` | `slots` | Array of 3 `sc_shm_slot_meta` structures. |
 
-**`sc_shm_slot_meta` structure (28 bytes each):**
+**`sc_shm_slot_meta` structure (32 bytes each):**
 | Offset from Meta | Type | Name | Description |
 |---|---|---|---|
 | 0 | `uint32_t` | `width` | Frame width. |
@@ -27,9 +28,10 @@ The segment is organized into a 4KB header (Page 0) followed by 3 page-aligned s
 | 12 | `uint32_t` | `size` | Size of the raw frame data in bytes. |
 | 16 | `uint64_t` | `pts` | Presentation timestamp in microseconds. |
 | 24 | `uint32_t` | `sequence` | Incremented every time this slot is updated. |
+| 28 | `uint32_t` | `reserved` | Padding for alignment. |
 
 #### Page 1+: Raw Frame Data
-Raw data for slot `i` starts at `4096 + i * slot_data_size`. Each buffer is guaranteed to start on a 4KB page boundary.
+Raw image data for slot `i` starts at `4096 + i * slot_data_size`. Each raw data buffer is guaranteed to start on a 4KB page boundary.
 
 ## JSON API Socket
 
@@ -49,6 +51,7 @@ The socket listens for JSON-encoded commands. Multiple commands can be sent over
     ```json
     {"type": "inject_keycode", "action": "down|up", "keycode": <int>}
     ```
+    (See `android/keycodes.h` for keycode values, e.g., HOME=3, BACK=4)
 *   **`inject_text`**: Inject raw text.
     ```json
     {"type": "inject_text", "text": "Hello"}

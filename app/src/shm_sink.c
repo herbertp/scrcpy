@@ -39,9 +39,7 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
         return false;
     }
 
-    // slot_data_size is aligned to 4k
     size_t aligned_slot_size = ALIGN_UP(data_size, PAGE_SIZE);
-    // Page 0 for header, then slots
     size_t total_size = PAGE_SIZE + aligned_slot_size * SC_SHM_SLOTS;
 
     sc_mutex_lock(&shm->mutex);
@@ -70,24 +68,21 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
         h->num_slots = SC_SHM_SLOTS;
         h->slot_data_size = aligned_slot_size;
         h->latest_index = 0;
-        // Mark all slots as empty initially
+        h->reserved = 0;
         for (int i=0; i < SC_SHM_SLOTS; ++i) {
             h->slots[i].sequence = 0;
         }
     }
 
     struct sc_shm_header *h = shm->shm_ptr;
-    // Choose next slot (round robin)
     uint32_t next_index = (h->latest_index + 1) % SC_SHM_SLOTS;
 
-    // Slot data starts at Page 1 + index * aligned_slot_size
     uint8_t *dst = (uint8_t *)shm->shm_ptr + PAGE_SIZE + next_index * aligned_slot_size;
 
     av_image_copy_to_buffer(dst, data_size, (const uint8_t *const *)frame->data,
                             frame->linesize, frame->format, frame->width,
                             frame->height, 1);
 
-    // Update slot metadata in Page 0
     struct sc_shm_slot_meta *meta = &h->slots[next_index];
     meta->width = frame->width;
     meta->height = frame->height;
@@ -95,8 +90,8 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
     meta->size = data_size;
     meta->pts = frame->pts;
     meta->sequence = ++shm->sequence;
+    meta->reserved = 0;
 
-    // Update latest index last
     h->latest_index = next_index;
 
     sc_mutex_unlock(&shm->mutex);
