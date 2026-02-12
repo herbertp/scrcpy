@@ -221,6 +221,8 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
         sc_overlay_render(screen->overlay, screen->display.renderer,
                           &screen->rect);
     }
+
+    SDL_RenderPresent(screen->display.renderer);
 }
 
 static void
@@ -228,6 +230,8 @@ sc_screen_render_novideo(struct sc_screen *screen) {
     enum sc_display_result res =
         sc_display_render(&screen->display, NULL, SC_ORIENTATION_0);
     (void) res; // any error already logged
+
+    SDL_RenderPresent(screen->display.renderer);
 }
 
 #if defined(__APPLE__) || defined(_WIN32)

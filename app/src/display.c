@@ -38,6 +38,8 @@ sc_display_init(struct sc_display *display, SDL_Window *window,
         return false;
     }
 
+    SDL_SetRenderDrawBlendMode(display->renderer, SDL_BLENDMODE_BLEND);
+
     SDL_RendererInfo renderer_info;
     int r = SDL_GetRendererInfo(display->renderer, &renderer_info);
     const char *renderer_name = r ? NULL : renderer_info.name;
@@ -346,6 +348,5 @@ sc_display_render(struct sc_display *display, const SDL_Rect *geometry,
         }
     }
 
-    SDL_RenderPresent(display->renderer);
     return SC_DISPLAY_RESULT_OK;
 }
