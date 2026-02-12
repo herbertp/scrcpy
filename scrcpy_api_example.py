@@ -76,8 +76,19 @@ def main():
         except Exception as e:
             pass
 
+    def swipe(start_x, start_y, end_x, end_y, steps=10, duration=0.2):
+        send_cmd({"type": "inject_touch", "action": "down", "x": start_x, "y": start_y})
+        for i in range(1, steps + 1):
+            time.sleep(duration / steps)
+            curr_x = start_x + (end_x - start_x) * i // steps
+            curr_y = start_y + (end_y - start_y) * i // steps
+            send_cmd({"type": "inject_touch", "action": "move", "x": curr_x, "y": curr_y})
+        send_cmd({"type": "inject_touch", "action": "up", "x": end_x, "y": end_y})
+
     try:
-        header_size = 28
+        # Header is 4k, each slot is aligned to 4k
+        PAGE_SIZE = 4096
+
         last_sequence = -1
 
         print("Starting main loop. Press Ctrl+C to stop.")
@@ -89,9 +100,13 @@ def main():
 
         time.sleep(1)
 
-        print("Injecting touch click at (5000, 5000)...")
-        send_cmd({"type": "inject_touch", "action": "down", "x": 5000, "y": 5000})
-        send_cmd({"type": "inject_touch", "action": "up", "x": 5000, "y": 5000})
+        print("Injecting swipe UP...")
+        swipe(5000, 8000, 5000, 2000)
+
+        time.sleep(1)
+
+        print("Injecting swipe DOWN...")
+        swipe(5000, 2000, 5000, 8000)
 
         time.sleep(1)
 
@@ -102,18 +117,25 @@ def main():
         start_time = time.time()
         while time.time() - start_time < 10:
             buf = shm.buf
-            header_data = bytes(buf[:header_size])
-            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", header_data)
+            # Read header to find latest index
+            header_data = bytes(buf[:12]) # latest_index, num_slots, slot_size
+            latest_index, num_slots, slot_size = struct.unpack("III", header_data)
+
+            # Slot header layout: width(4), height(4), format(4), size(4), pts(8), sequence(4) = 28 bytes
+            slot_offset = PAGE_SIZE + latest_index * slot_size
+            slot_header = bytes(buf[slot_offset:slot_offset + 28])
+            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", slot_header)
 
             if sequence != last_sequence:
                 if not frame_saved and data_size > 0:
-                    yuv_data = bytes(buf[header_size:header_size + data_size])
+                    # Data is at 4k offset from slot start
+                    data_offset = slot_offset + PAGE_SIZE
+                    yuv_data = bytes(buf[data_offset:data_offset + data_size])
                     save_ppm(width, height, yuv_data, "frame.ppm")
                     frame_saved = True
 
                 last_sequence = sequence
 
-                # Test new overlay features: thick lines and filled shapes
                 send_cmd({"type": "overlay_clear"})
 
                 # Filled background rectangle
@@ -131,7 +153,7 @@ def main():
                 # Better text rendering
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "text", "x": 1000, "y": 1200, "size": 4, "text": f"STATUS: OK | SEQ: {sequence}", "r": 255, "g": 255, "b": 255, "a": 255}
+                    "item": {"type": "text", "x": 1000, "y": 1200, "size": 4, "text": f"BUFF: {latest_index} | SEQ: {sequence}", "r": 255, "g": 255, "b": 255, "a": 255}
                 })
 
                 # Filled red circle

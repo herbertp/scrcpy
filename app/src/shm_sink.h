@@ -10,13 +10,23 @@
 #include "trait/frame_sink.h"
 #include "util/thread.h"
 
-struct sc_shm_header {
+#define SC_SHM_SLOTS 3
+
+struct sc_shm_slot {
     uint32_t width;
     uint32_t height;
     uint32_t format;
     uint32_t size;
     uint64_t pts;
     uint32_t sequence;
+    uint32_t padding; // Align data to 4k
+};
+
+struct sc_shm_header {
+    uint32_t latest_index;
+    uint32_t num_slots;
+    uint32_t slot_size; // Includes slot header and data, aligned to 4k
+    uint8_t padding[4084]; // Ensure header itself is 4k
 };
 
 struct sc_shm_sink {

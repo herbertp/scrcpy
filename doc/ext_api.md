@@ -1,6 +1,6 @@
 # scrcpy External API Documentation
 
-This extension allows external processes to access the device display via Shared Memory and control it via a JSON API over a Unix Domain Socket.
+This extension allows external processes to access the device display via a Triple-Buffered Shared Memory segment and control it via a JSON API over a Unix Domain Socket.
 
 ## Shared Memory (SHM) Access
 
@@ -8,19 +8,29 @@ Enable with `--shm-name=<name>`.
 
 ### Segment Layout
 
-The shared memory segment contains a fixed-size header followed by the raw decoded frame data.
+The segment is organized into a 4KB header followed by 3 page-aligned slots.
 
+#### Header (at offset 0)
 | Offset | Type | Name | Description |
 |---|---|---|---|
-| 0 | `uint32_t` | `width` | Frame width in pixels. |
-| 4 | `uint32_t` | `height` | Frame height in pixels. |
+| 0 | `uint32_t` | `latest_index` | Index of the most recently completed frame (0, 1, or 2). |
+| 4 | `uint32_t` | `num_slots` | Always `3`. |
+| 8 | `uint32_t` | `slot_size` | Total size of one slot (header + data + padding), 4KB aligned. |
+
+#### Slots (starting at offset 4096)
+Each slot starts at `4096 + index * slot_size`.
+
+| Offset from Slot Start | Type | Name | Description |
+|---|---|---|---|
+| 0 | `uint32_t` | `width` | Frame width. |
+| 4 | `uint32_t` | `height` | Frame height. |
 | 8 | `uint32_t` | `format` | Pixel format (usually `0` for YUV420P). |
 | 12 | `uint32_t` | `size` | Size of the frame data in bytes. |
 | 16 | `uint64_t` | `pts` | Presentation timestamp in microseconds. |
-| 24 | `uint32_t` | `sequence` | Incremented every time a new frame is copied. |
-| 28 | `uint8_t[]` | `data` | Raw frame data. |
+| 24 | `uint32_t` | `sequence` | Sequence number for this slot. |
+| 4096 | `uint8_t[]` | `data` | Raw frame data (aligned to 4KB boundary from slot start). |
 
-**Note**: To avoid race conditions, the `sequence` number is updated *after* the `data` has been copied into the segment.
+**Note**: `latest_index` is updated atomically only after a full frame copy. To read, check `latest_index` in the main header, then access the corresponding slot.
 
 ## JSON API Socket
 
@@ -66,8 +76,8 @@ The socket listens for JSON-encoded commands. Multiple commands can be sent over
     }
     ```
     **Primitive fields**:
-    - `line`: `x1`, `y1`, `x2`, `y2` (coordinates)
-    - `rect`: `w`, `h` (width and height)
+    - `line`: `x1`, `y1`, `x2`, `y2`
+    - `rect`: `w`, `h`
     - `circle`: `radius`
     - `cross`: `size`
     - `text`: `text` (string), `size` (scale factor)

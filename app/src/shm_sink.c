@@ -7,10 +7,14 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <stdio.h>
 #include <libavutil/imgutils.h>
 #include "util/log.h"
 
 #define DOWNCAST(SINK) container_of(SINK, struct sc_shm_sink, frame_sink)
+
+#define PAGE_SIZE 4096
+#define ALIGN_UP(s, a) (((s) + (a) - 1) & ~((a) - 1))
 
 static bool
 sc_shm_sink_open(struct sc_frame_sink *sink, const AVCodecContext *ctx) {
@@ -35,7 +39,13 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
         return false;
     }
 
-    size_t total_size = sizeof(struct sc_shm_header) + data_size;
+    // Each slot starts at a page boundary.
+    // Inside the slot, we want the data itself to be at a 4k offset from slot start.
+    size_t data_offset = PAGE_SIZE;
+    size_t raw_slot_size = data_offset + data_size;
+    size_t aligned_slot_size = ALIGN_UP(raw_slot_size, PAGE_SIZE);
+    size_t header_offset = PAGE_SIZE; // Make header 4k
+    size_t total_size = header_offset + aligned_slot_size * SC_SHM_SLOTS;
 
     sc_mutex_lock(&shm->mutex);
 
@@ -57,22 +67,37 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
             return false;
         }
         shm->shm_size = total_size;
+
+        // Initialize header
+        struct sc_shm_header *h = shm->shm_ptr;
+        h->num_slots = SC_SHM_SLOTS;
+        h->slot_size = aligned_slot_size;
+        h->latest_index = 0;
     }
 
-    struct sc_shm_header *header = shm->shm_ptr;
-    header->width = frame->width;
-    header->height = frame->height;
-    header->format = frame->format;
-    header->size = data_size;
-    header->pts = frame->pts;
+    struct sc_shm_header *h = shm->shm_ptr;
+    // Choose next slot (round robin)
+    uint32_t next_index = (h->latest_index + 1) % SC_SHM_SLOTS;
 
-    uint8_t *dst = (uint8_t *)shm->shm_ptr + sizeof(struct sc_shm_header);
+    uint8_t *slot_ptr = (uint8_t *)shm->shm_ptr + PAGE_SIZE
+                        + next_index * aligned_slot_size;
+    struct sc_shm_slot *slot = (struct sc_shm_slot *)slot_ptr;
+
+    slot->width = frame->width;
+    slot->height = frame->height;
+    slot->format = frame->format;
+    slot->size = data_size;
+    slot->pts = frame->pts;
+
+    uint8_t *dst = slot_ptr + data_offset;
+
     av_image_copy_to_buffer(dst, data_size, (const uint8_t *const *)frame->data,
                             frame->linesize, frame->format, frame->width,
                             frame->height, 1);
 
-    // Update sequence after copy to avoid race condition with reader
-    header->sequence = ++shm->sequence;
+    // Update sequence and latest index after copy
+    slot->sequence = ++shm->sequence;
+    h->latest_index = next_index;
 
     sc_mutex_unlock(&shm->mutex);
 
@@ -93,7 +118,6 @@ sc_shm_sink_init(struct sc_shm_sink *shm, const char *shm_name) {
         return false;
     }
 
-    // Ensure the name starts with a slash for POSIX SHM
     const char *actual_name = shm_name;
     char *allocated_name = NULL;
     if (shm_name[0] != '/') {
