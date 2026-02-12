@@ -86,7 +86,6 @@ def main():
         send_cmd({"type": "inject_touch", "action": "up", "x": end_x, "y": end_y})
 
     try:
-        # Header is 4k, each slot is aligned to 4k
         PAGE_SIZE = 4096
 
         last_sequence = -1
@@ -115,52 +114,48 @@ def main():
 
         frame_saved = False
         start_time = time.time()
-        while time.time() - start_time < 10:
+        # Run for 30 seconds
+        while time.time() - start_time < 30:
             buf = shm.buf
-            # Read header to find latest index
-            header_data = bytes(buf[:12]) # latest_index, num_slots, slot_size
-            latest_index, num_slots, slot_size = struct.unpack("III", header_data)
+            # Header layout: latest_index(4), num_slots(4), slot_data_size(4)
+            header_data = bytes(buf[:12])
+            latest_index, num_slots, slot_data_size = struct.unpack("III", header_data)
 
-            # Slot header layout: width(4), height(4), format(4), size(4), pts(8), sequence(4) = 28 bytes
-            slot_offset = PAGE_SIZE + latest_index * slot_size
-            slot_header = bytes(buf[slot_offset:slot_offset + 28])
-            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", slot_header)
+            # Slot meta array starts after the first 12 bytes in Page 0.
+            # struct sc_shm_slot_meta: w(4), h(4), fmt(4), size(4), pts(8), seq(4) = 28 bytes
+            meta_offset = 12 + latest_index * 28
+            meta_data = bytes(buf[meta_offset:meta_offset + 28])
+            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", meta_data)
 
             if sequence != last_sequence:
                 if not frame_saved and data_size > 0:
-                    # Data is at 4k offset from slot start
-                    data_offset = slot_offset + PAGE_SIZE
+                    # Slot data starts at Page 1 + index * aligned_slot_size
+                    data_offset = PAGE_SIZE + latest_index * slot_data_size
                     yuv_data = bytes(buf[data_offset:data_offset + data_size])
                     save_ppm(width, height, yuv_data, "frame.ppm")
                     frame_saved = True
 
                 last_sequence = sequence
 
-                send_cmd({"type": "overlay_clear"})
-
-                # Filled background rectangle
+                # Test persistent overlay with ID
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "rect", "x": 500, "y": 500, "w": 9000, "h": 2000, "r": 50, "g": 50, "b": 50, "a": 180, "filled": True}
+                    "item": {"id": 1, "type": "rect", "x": 500, "y": 500, "w": 9000, "h": 1000, "r": 0, "g": 0, "b": 255, "a": 128, "filled": True}
                 })
 
-                # Thick green line
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "line", "x1": 1000, "y1": 1000, "x2": 9000, "y2": 1000, "r": 0, "g": 255, "b": 0, "a": 255, "thickness": 10}
+                    "item": {"id": 2, "type": "text", "x": 1000, "y": 700, "size": 3, "text": f"LATEST SEQ: {sequence}", "r": 255, "g": 255, "b": 255, "a": 255}
                 })
 
-                # Better text rendering
+                # Update a moving circle using a fixed ID (3)
                 send_cmd({
                     "type": "overlay_add",
-                    "item": {"type": "text", "x": 1000, "y": 1200, "size": 4, "text": f"BUFF: {latest_index} | SEQ: {sequence}", "r": 255, "g": 255, "b": 255, "a": 255}
+                    "item": {"id": 3, "type": "circle", "x": 5000 + int(2000 * (time.time() % 2 - 1)), "y": 5000, "radius": 400, "r": 255, "g": 255, "b": 0, "a": 200, "filled": True}
                 })
 
-                # Filled red circle
-                send_cmd({
-                    "type": "overlay_add",
-                    "item": {"type": "circle", "x": 5000, "y": 5000, "radius": 500, "r": 255, "g": 0, "b": 0, "a": 128, "filled": True}
-                })
+                # Force refresh to see overlays even if screen doesn't update
+                send_cmd({"type": "render_refresh"})
 
             time.sleep(0.02)
 
@@ -170,6 +165,7 @@ def main():
         print("Cleaning up...")
         try:
             send_cmd({"type": "overlay_clear"})
+            send_cmd({"type": "render_refresh"})
         except:
             pass
         shm.close()

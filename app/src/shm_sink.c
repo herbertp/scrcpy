@@ -39,13 +39,10 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
         return false;
     }
 
-    // Each slot starts at a page boundary.
-    // Inside the slot, we want the data itself to be at a 4k offset from slot start.
-    size_t data_offset = PAGE_SIZE;
-    size_t raw_slot_size = data_offset + data_size;
-    size_t aligned_slot_size = ALIGN_UP(raw_slot_size, PAGE_SIZE);
-    size_t header_offset = PAGE_SIZE; // Make header 4k
-    size_t total_size = header_offset + aligned_slot_size * SC_SHM_SLOTS;
+    // slot_data_size is aligned to 4k
+    size_t aligned_slot_size = ALIGN_UP(data_size, PAGE_SIZE);
+    // Page 0 for header, then slots
+    size_t total_size = PAGE_SIZE + aligned_slot_size * SC_SHM_SLOTS;
 
     sc_mutex_lock(&shm->mutex);
 
@@ -71,32 +68,35 @@ sc_shm_sink_push(struct sc_frame_sink *sink, const AVFrame *frame) {
         // Initialize header
         struct sc_shm_header *h = shm->shm_ptr;
         h->num_slots = SC_SHM_SLOTS;
-        h->slot_size = aligned_slot_size;
+        h->slot_data_size = aligned_slot_size;
         h->latest_index = 0;
+        // Mark all slots as empty initially
+        for (int i=0; i < SC_SHM_SLOTS; ++i) {
+            h->slots[i].sequence = 0;
+        }
     }
 
     struct sc_shm_header *h = shm->shm_ptr;
     // Choose next slot (round robin)
     uint32_t next_index = (h->latest_index + 1) % SC_SHM_SLOTS;
 
-    uint8_t *slot_ptr = (uint8_t *)shm->shm_ptr + PAGE_SIZE
-                        + next_index * aligned_slot_size;
-    struct sc_shm_slot *slot = (struct sc_shm_slot *)slot_ptr;
-
-    slot->width = frame->width;
-    slot->height = frame->height;
-    slot->format = frame->format;
-    slot->size = data_size;
-    slot->pts = frame->pts;
-
-    uint8_t *dst = slot_ptr + data_offset;
+    // Slot data starts at Page 1 + index * aligned_slot_size
+    uint8_t *dst = (uint8_t *)shm->shm_ptr + PAGE_SIZE + next_index * aligned_slot_size;
 
     av_image_copy_to_buffer(dst, data_size, (const uint8_t *const *)frame->data,
                             frame->linesize, frame->format, frame->width,
                             frame->height, 1);
 
-    // Update sequence and latest index after copy
-    slot->sequence = ++shm->sequence;
+    // Update slot metadata in Page 0
+    struct sc_shm_slot_meta *meta = &h->slots[next_index];
+    meta->width = frame->width;
+    meta->height = frame->height;
+    meta->format = frame->format;
+    meta->size = data_size;
+    meta->pts = frame->pts;
+    meta->sequence = ++shm->sequence;
+
+    // Update latest index last
     h->latest_index = next_index;
 
     sc_mutex_unlock(&shm->mutex);

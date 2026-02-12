@@ -149,6 +149,10 @@ sc_screen_set_orientation(struct sc_screen *screen,
 void
 sc_screen_set_paused(struct sc_screen *screen, bool paused);
 
+// force a redraw of the current frame and overlays
+void
+sc_screen_refresh(struct sc_screen *screen);
+
 // react to SDL events
 // If this function returns false, scrcpy must exit with an error.
 bool

@@ -8,29 +8,28 @@ Enable with `--shm-name=<name>`.
 
 ### Segment Layout
 
-The segment is organized into a 4KB header followed by 3 page-aligned slots.
+The segment is organized into a 4KB header (Page 0) followed by 3 page-aligned slots starting at Page 1 (offset 4096).
 
-#### Header (at offset 0)
+#### Page 0: Global Header & Metadata
 | Offset | Type | Name | Description |
 |---|---|---|---|
 | 0 | `uint32_t` | `latest_index` | Index of the most recently completed frame (0, 1, or 2). |
 | 4 | `uint32_t` | `num_slots` | Always `3`. |
-| 8 | `uint32_t` | `slot_size` | Total size of one slot (header + data + padding), 4KB aligned. |
+| 8 | `uint32_t` | `slot_data_size` | Size of raw data in one slot, 4KB aligned. |
+| 12 | `struct[]` | `slots` | Array of 3 `sc_shm_slot_meta` structures. |
 
-#### Slots (starting at offset 4096)
-Each slot starts at `4096 + index * slot_size`.
-
-| Offset from Slot Start | Type | Name | Description |
+**`sc_shm_slot_meta` structure (28 bytes each):**
+| Offset from Meta | Type | Name | Description |
 |---|---|---|---|
 | 0 | `uint32_t` | `width` | Frame width. |
 | 4 | `uint32_t` | `height` | Frame height. |
 | 8 | `uint32_t` | `format` | Pixel format (usually `0` for YUV420P). |
-| 12 | `uint32_t` | `size` | Size of the frame data in bytes. |
+| 12 | `uint32_t` | `size` | Size of the raw frame data in bytes. |
 | 16 | `uint64_t` | `pts` | Presentation timestamp in microseconds. |
-| 24 | `uint32_t` | `sequence` | Sequence number for this slot. |
-| 4096 | `uint8_t[]` | `data` | Raw frame data (aligned to 4KB boundary from slot start). |
+| 24 | `uint32_t` | `sequence` | Incremented every time this slot is updated. |
 
-**Note**: `latest_index` is updated atomically only after a full frame copy. To read, check `latest_index` in the main header, then access the corresponding slot.
+#### Page 1+: Raw Frame Data
+Raw data for slot `i` starts at `4096 + i * slot_data_size`. Each buffer is guaranteed to start on a 4KB page boundary.
 
 ## JSON API Socket
 
@@ -50,23 +49,23 @@ The socket listens for JSON-encoded commands. Multiple commands can be sent over
     ```json
     {"type": "inject_keycode", "action": "down|up", "keycode": <int>}
     ```
-    (See `android/keycodes.h` for keycode values, e.g., HOME=3, BACK=4)
 *   **`inject_text`**: Inject raw text.
     ```json
     {"type": "inject_text", "text": "Hello"}
     ```
-*   **`block_input`**: Block/unblock physical user input (keyboard/mouse from the PC).
+*   **`block_input`**: Block/unblock physical user input.
     ```json
     {"type": "block_input", "value": true|false}
     ```
 
 #### Overlays
 
-*   **`overlay_add`**: Add a primitive to the screen overlay.
+*   **`overlay_add`**: Add or update a primitive. If `id` matches an existing item, it is replaced.
     ```json
     {
       "type": "overlay_add",
       "item": {
+        "id": <uint32>,
         "type": "line|rect|circle|cross|text",
         "x": 0..10000, "y": 0..10000,
         "r": 0..255, "g": 0..255, "b": 0..255, "a": 0..255,
@@ -75,17 +74,21 @@ The socket listens for JSON-encoded commands. Multiple commands can be sent over
       }
     }
     ```
-    **Primitive fields**:
-    - `line`: `x1`, `y1`, `x2`, `y2`
-    - `rect`: `w`, `h`
-    - `circle`: `radius`
-    - `cross`: `size`
-    - `text`: `text` (string), `size` (scale factor)
-
+*   **`overlay_remove`**: Delete a specific overlay item.
+    ```json
+    {"type": "overlay_remove", "id": <uint32>}
+    ```
 *   **`overlay_clear`**: Clear all current overlay items.
     ```json
     {"type": "overlay_clear"}
     ```
 
+#### Rendering
+
+*   **`render_refresh`**: Force scrcpy to redraw the current frame and overlays immediately. Use this if you update overlays while the device screen is static.
+    ```json
+    {"type": "render_refresh"}
+    ```
+
 ### Coordinates
-All coordinates (`x`, `y`, `w`, `h`, etc.) are normalized in the range **[0, 10000]**, where (0,0) is the top-left and (10000, 10000) is the bottom-right of the visible device screen area.
+All coordinates are normalized in the range **[0, 10000]** mapped to the visible device screen area.

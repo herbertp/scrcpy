@@ -222,8 +222,30 @@ sc_overlay_destroy(struct sc_overlay *overlay) {
 void
 sc_overlay_add(struct sc_overlay *overlay, const struct sc_overlay_item *item) {
     sc_mutex_lock(&overlay->mutex);
+    // Check if ID already exists, if so replace it
+    for (size_t i = 0; i < overlay->items.size; ++i) {
+        if (overlay->items.data[i].id == item->id) {
+            sc_overlay_item_destroy(&overlay->items.data[i]);
+            overlay->items.data[i] = *item;
+            sc_mutex_unlock(&overlay->mutex);
+            return;
+        }
+    }
     if (!sc_vector_push(&overlay->items, *item)) {
         LOGW("Could not add overlay item");
+    }
+    sc_mutex_unlock(&overlay->mutex);
+}
+
+void
+sc_overlay_remove(struct sc_overlay *overlay, uint32_t id) {
+    sc_mutex_lock(&overlay->mutex);
+    for (size_t i = 0; i < overlay->items.size; ++i) {
+        if (overlay->items.data[i].id == id) {
+            sc_overlay_item_destroy(&overlay->items.data[i]);
+            sc_vector_remove(&overlay->items, i);
+            break;
+        }
     }
     sc_mutex_unlock(&overlay->mutex);
 }

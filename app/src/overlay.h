@@ -15,6 +15,7 @@ enum sc_overlay_type {
 };
 
 struct sc_overlay_item {
+    uint32_t id;
     enum sc_overlay_type type;
     union {
         struct {
@@ -52,6 +53,9 @@ sc_overlay_destroy(struct sc_overlay *overlay);
 
 void
 sc_overlay_add(struct sc_overlay *overlay, const struct sc_overlay_item *item);
+
+void
+sc_overlay_remove(struct sc_overlay *overlay, uint32_t id);
 
 void
 sc_overlay_clear(struct sc_overlay *overlay);

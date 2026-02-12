@@ -716,6 +716,13 @@ sc_screen_update_frame(struct sc_screen *screen) {
 }
 
 void
+sc_screen_refresh(struct sc_screen *screen) {
+    if (screen->has_frame) {
+        sc_screen_render(screen, false);
+    }
+}
+
+void
 sc_screen_set_paused(struct sc_screen *screen, bool paused) {
     assert(screen->video);
 

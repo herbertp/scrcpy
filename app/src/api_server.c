@@ -13,7 +13,14 @@
 #include "util/log.h"
 #include "util/cJSON.h"
 #include "screen.h"
+#include "events.h"
 #include "control_msg.h"
+
+static void
+sc_screen_refresh_runnable(void *userdata) {
+    struct sc_screen *screen = userdata;
+    sc_screen_refresh(screen);
+}
 
 static bool
 process_command(struct sc_api_server *api, const char *json_str) {
@@ -86,6 +93,9 @@ process_command(struct sc_api_server *api, const char *json_str) {
         cJSON *item_json = cJSON_GetObjectItemCaseSensitive(json, "item");
         if (cJSON_IsObject(item_json)) {
             struct sc_overlay_item item;
+            cJSON *iid = cJSON_GetObjectItemCaseSensitive(item_json, "id");
+            item.id = cJSON_IsNumber(iid) ? iid->valueint : 0;
+
             cJSON *itype = cJSON_GetObjectItemCaseSensitive(item_json, "type");
             cJSON *r = cJSON_GetObjectItemCaseSensitive(item_json, "r");
             cJSON *g = cJSON_GetObjectItemCaseSensitive(item_json, "g");
@@ -135,8 +145,15 @@ process_command(struct sc_api_server *api, const char *json_str) {
             }
             sc_overlay_add(api->overlay, &item);
         }
+    } else if (strcmp(type->valuestring, "overlay_remove") == 0) {
+        cJSON *iid = cJSON_GetObjectItemCaseSensitive(json, "id");
+        if (cJSON_IsNumber(iid)) {
+            sc_overlay_remove(api->overlay, iid->valueint);
+        }
     } else if (strcmp(type->valuestring, "overlay_clear") == 0) {
         sc_overlay_clear(api->overlay);
+    } else if (strcmp(type->valuestring, "render_refresh") == 0) {
+        sc_post_to_main_thread(sc_screen_refresh_runnable, api->screen);
     } else if (strcmp(type->valuestring, "block_input") == 0) {
         cJSON *value = cJSON_GetObjectItemCaseSensitive(json, "value");
         if (cJSON_IsBool(value)) {
