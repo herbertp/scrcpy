@@ -8,8 +8,6 @@ from multiprocessing import shared_memory, resource_tracker
 
 def save_ppm(width, height, yuv_data, filename):
     """Saves a YUV420P frame as a PPM file (RGB)."""
-    # Simple YUV420P to RGB conversion
-    # YUV420P: Y plane (W*H), then U plane (W/2 * H/2), then V plane (W/2 * H/2)
     y_size = width * height
     uv_size = (width // 2) * (height // 2)
 
@@ -22,12 +20,9 @@ def save_ppm(width, height, yuv_data, filename):
     for j in range(height):
         for i in range(width):
             y = y_plane[j * width + i]
-            # U and V are subsampled
             u = u_plane[(j // 2) * (width // 2) + (i // 2)]
             v = v_plane[(j // 2) * (width // 2) + (i // 2)]
 
-            # Integer conversion (standard SDTV coefficients)
-            # C = Y - 16, D = U - 128, E = V - 128
             c = y - 16
             d = u - 128
             e = v - 128
@@ -80,7 +75,7 @@ def main():
                 s.connect(api_socket_path)
                 s.sendall(json.dumps(cmd).encode())
         except Exception as e:
-            pass # print(f"Failed to send command: {e}")
+            pass
 
     try:
         header_size = 28
@@ -89,37 +84,33 @@ def main():
         print("Starting main loop. Press Ctrl+C to stop.")
 
         send_cmd({"type": "overlay_clear"})
-
-        # Block user input for a bit to demonstrate
-        print("Blocking user input for 3 seconds...")
         send_cmd({"type": "block_input", "value": True})
 
-        # Draw a big blue rectangle (semi-transparent)
         send_cmd({
             "type": "overlay_add",
-            "item": {"type": "rect", "x": 1000, "y": 1000, "w": 8000, "h": 8000, "r": 0, "g": 0, "b": 255, "a": 128}
+            "item": {"type": "rect", "x": 1000, "y": 1000, "w": 8000, "h": 8000, "r": 0, "g": 0, "b": 255, "a": 64}
         })
 
         frame_saved = False
         start_time = time.time()
         while time.time() - start_time < 10:
-            width, height, fmt, data_size, pts, sequence = struct.unpack_from("IIIIQI", shm.buf, 0)
+            # Explicitly manage memoryview to avoid BufferError on close()
+            buf = shm.buf
+            header_data = bytes(buf[:header_size])
+            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", header_data)
 
             if sequence != last_sequence:
                 if last_sequence != -1:
                     print(f"Frame: {width}x{height}, format={fmt}, pts={pts}, seq={sequence}")
 
-                # Save first valid frame to verify SHM content
                 if not frame_saved and data_size > 0:
-                    yuv_data = shm.buf[header_size:header_size + data_size]
+                    yuv_data = bytes(buf[header_size:header_size + data_size])
                     save_ppm(width, height, yuv_data, "frame.ppm")
                     frame_saved = True
 
                 last_sequence = sequence
 
-                # Clear and add new circle and text
                 send_cmd({"type": "overlay_clear"})
-                # Re-add background rect because we cleared all
                 send_cmd({
                     "type": "overlay_add",
                     "item": {"type": "rect", "x": 1000, "y": 1000, "w": 8000, "h": 8000, "r": 0, "g": 0, "b": 255, "a": 64}
@@ -136,14 +127,24 @@ def main():
                 if time.time() - start_time > 3:
                      send_cmd({"type": "block_input", "value": False})
 
+            # In some Python versions, buf might keep a reference even after this loop.
+            # But here buf is local to the loop.
+            # To be absolutely sure, we can do:
+            # del buf
+
             time.sleep(0.01)
 
     except KeyboardInterrupt:
         pass
     finally:
         print("Cleaning up...")
-        send_cmd({"type": "overlay_clear"})
-        send_cmd({"type": "block_input", "value": False})
+        try:
+            send_cmd({"type": "overlay_clear"})
+            send_cmd({"type": "block_input", "value": False})
+        except:
+            pass
+        # Give some time for GC if needed
+        time.sleep(0.1)
         shm.close()
 
 if __name__ == "__main__":
