@@ -4,6 +4,7 @@ import time
 import sys
 import struct
 import os
+import threading
 from multiprocessing import shared_memory, resource_tracker
 
 # Constants from android/keycodes.h
@@ -13,17 +14,13 @@ AKEYCODE_APP_SWITCH = 187
 
 def save_ppm(width, height, yuv_data, filename):
     """Saves a YUV420P frame as a PPM file (RGB)."""
-    # YUV420P: Y plane (W*H), then U plane (W/2 * H/2), then V plane (W/2 * H/2)
-    # Handle odd dimensions correctly
     uv_width = (width + 1) // 2
     uv_height = (height + 1) // 2
-
     y_size = width * height
     uv_size = uv_width * uv_height
     expected_size = y_size + 2 * uv_size
 
     if len(yuv_data) < expected_size:
-        print(f"Warning: YUV data too short ({len(yuv_data)} < {expected_size})")
         return
 
     y_plane = yuv_data[:y_size]
@@ -31,28 +28,21 @@ def save_ppm(width, height, yuv_data, filename):
     v_plane = yuv_data[y_size + uv_size:y_size + 2*uv_size]
 
     rgb = bytearray(width * height * 3)
-
-    # Pre-calculate UV indices for speed
     for j in range(height):
         uv_j = j // 2
         y_offset = j * width
         rgb_offset = j * width * 3
         for i in range(width):
             uv_i = i // 2
-
             y = y_plane[y_offset + i]
             u = u_plane[uv_j * uv_width + uv_i]
             v = v_plane[uv_j * uv_width + uv_i]
-
-            # Integer conversion
             c = y - 16
             d = u - 128
             e = v - 128
-
             r = (298 * c + 409 * e + 128) >> 8
             g = (298 * c - 100 * d - 208 * e + 128) >> 8
             b = (298 * c + 516 * d + 128) >> 8
-
             idx = rgb_offset + i * 3
             rgb[idx] = max(0, min(255, r))
             rgb[idx+1] = max(0, min(255, g))
@@ -63,145 +53,127 @@ def save_ppm(width, height, yuv_data, filename):
         f.write(rgb)
     print(f"Saved frame to {filename}")
 
-def main():
-    shm_name = "scrcpy_shm"
-    api_socket_path = "/tmp/scrcpy_api.sock"
+class ScrcpyClient:
+    def __init__(self, shm_name, socket_path):
+        self.shm_name = shm_name
+        self.socket_path = socket_path
+        self.shm = None
+        self.sock = None
+        self.running = True
 
-    if len(sys.argv) > 1:
-        shm_name = sys.argv[1]
-    if len(sys.argv) > 2:
-        api_socket_path = sys.argv[2]
+    def connect(self):
+        name_for_py = self.shm_name if not self.shm_name.startswith("/") else self.shm_name[1:]
+        print(f"Connecting to SHM: {self.shm_name}")
+        self.shm = shared_memory.SharedMemory(name=name_for_py)
+        resource_tracker.unregister(self.shm._name, "shared_memory")
 
-    name_for_py = shm_name if not shm_name.startswith("/") else shm_name[1:]
+        print(f"Connecting to API socket: {self.socket_path}")
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.socket_path)
+        self.sock.setblocking(False)
 
-    print(f"Connecting to SHM: {shm_name}")
-    try:
-        shm = shared_memory.SharedMemory(name=name_for_py)
+    def send(self, cmd):
+        data = json.dumps(cmd).encode()
+        self.sock.setblocking(True)
+        self.sock.sendall(data)
+        self.sock.setblocking(False)
+
+    def receive_loop(self):
+        buffer = ""
+        while self.running:
+            try:
+                data = self.sock.recv(4096)
+                if not data:
+                    break
+                buffer += data.decode()
+                # Use a better JSON split logic
+                while "{" in buffer and "}" in buffer:
+                    # Find matching braces
+                    start = buffer.find("{")
+                    count = 0
+                    end = -1
+                    for i in range(start, len(buffer)):
+                        if buffer[i] == "{": count += 1
+                        elif buffer[i] == "}": count -= 1
+                        if count == 0:
+                            end = i + 1
+                            break
+                    if end != -1:
+                        msg_str = buffer[start:end]
+                        buffer = buffer[end:]
+                        try:
+                            msg = json.loads(msg_str)
+                            if msg.get("type") == "event_input":
+                                evt = msg["event"]
+                                intercepted = " [INTERCEPTED]" if msg.get("intercepted") else ""
+                                if evt["type"] == "mouse_motion":
+                                    # print(f"User Mouse Move: ({evt['x']}, {evt['y']}){intercepted}")
+                                    pass
+                                elif evt["type"] == "mouse_button":
+                                    print(f"User Mouse {evt['action'].upper()}: Button {evt['button']} at ({evt['x']}, {evt['y']}){intercepted}")
+                                elif evt["type"] == "key":
+                                    print(f"User Key {evt['action'].upper()}: Code {evt['keycode']}{intercepted}")
+                        except json.JSONDecodeError:
+                            pass
+                    else:
+                        break
+            except BlockingIOError:
+                time.sleep(0.01)
+            except Exception as e:
+                print(f"Receiver error: {e}")
+                break
+
+    def run(self):
+        self.connect()
+        recv_thread = threading.Thread(target=self.receive_loop)
+        recv_thread.start()
+
         try:
-            resource_tracker.unregister(shm._name, "shared_memory")
-        except Exception as e:
-            print(f"Note: Could not unregister SHM from resource tracker: {e}")
-    except FileNotFoundError:
-        print(f"SHM {shm_name} not found. Is scrcpy running with --shm-name={shm_name}?")
-        return
+            PAGE_SIZE = 4096
+            last_sequence = -1
+            print("Starting main loop. Press Ctrl+C to stop.")
+            print("TRY HOLDING RIGHT-ALT IN SCRCPY WINDOW TO TEST INTERCEPTION!")
 
-    print(f"Connecting to API socket: {api_socket_path}")
+            frame_saved = False
+            start_time = time.time()
+            while time.time() - start_time < 30:
+                buf = self.shm.buf
+                header_data = bytes(buf[:12])
+                latest_index, num_slots, slot_data_size = struct.unpack("III", header_data)
 
-    def send_cmd(cmd):
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-                s.connect(api_socket_path)
-                s.sendall(json.dumps(cmd).encode())
-        except Exception as e:
+                meta_offset = 16 + latest_index * 32
+                meta_data = bytes(buf[meta_offset:meta_offset + 28])
+                width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", meta_data)
+
+                if sequence != last_sequence:
+                    if not frame_saved and data_size > 0:
+                        data_offset = PAGE_SIZE + latest_index * slot_data_size
+                        save_ppm(width, height, bytes(buf[data_offset:data_offset + data_size]), "frame.ppm")
+                        frame_saved = True
+
+                    last_sequence = sequence
+
+                    self.send({"type": "overlay_add", "item": {"id": 1, "type": "rect", "x": 100, "y": 100, "w": 3500, "h": 500, "r": 0, "g": 0, "b": 150, "a": 200, "filled": True}})
+                    self.send({"type": "overlay_add", "item": {"id": 2, "type": "text", "x": 200, "y": 200, "size": 3, "text": f"EVENT MONITOR ACTIVE", "r": 255, "g": 255, "b": 255, "a": 255}})
+                    self.send({"type": "render_refresh"})
+
+                time.sleep(0.05)
+
+        except KeyboardInterrupt:
             pass
-
-    def swipe(start_x, start_y, end_x, end_y, steps=15, duration=0.3):
-        send_cmd({"type": "inject_touch", "action": "down", "x": start_x, "y": start_y})
-        for i in range(1, steps + 1):
-            time.sleep(duration / steps)
-            curr_x = start_x + (end_x - start_x) * i // steps
-            curr_y = start_y + (end_y - start_y) * i // steps
-            send_cmd({"type": "inject_touch", "action": "move", "x": curr_x, "y": curr_y})
-        send_cmd({"type": "inject_touch", "action": "up", "x": end_x, "y": end_y})
-
-    try:
-        PAGE_SIZE = 4096
-
-        last_sequence = -1
-
-        print("Starting main loop. Press Ctrl+C to stop.")
-
-        # Test input injection sequence
-        print("Injecting HOME button...")
-        send_cmd({"type": "inject_keycode", "action": "down", "keycode": AKEYCODE_HOME})
-        send_cmd({"type": "inject_keycode", "action": "up", "keycode": AKEYCODE_HOME})
-        time.sleep(1)
-
-        print("Injecting swipe UP (Notification panel)...")
-        swipe(5000, 100, 5000, 5000) # Swipe down from top to open notifications
-        time.sleep(1)
-
-        print("Injecting BACK button...")
-        send_cmd({"type": "inject_keycode", "action": "down", "keycode": AKEYCODE_BACK})
-        send_cmd({"type": "inject_keycode", "action": "up", "keycode": AKEYCODE_BACK})
-        time.sleep(1)
-
-        print("Injecting APP_SWITCH...")
-        send_cmd({"type": "inject_keycode", "action": "down", "keycode": AKEYCODE_APP_SWITCH})
-        send_cmd({"type": "inject_keycode", "action": "up", "keycode": AKEYCODE_APP_SWITCH})
-        time.sleep(1)
-
-        print("Returning HOME...")
-        send_cmd({"type": "inject_keycode", "action": "down", "keycode": AKEYCODE_HOME})
-        send_cmd({"type": "inject_keycode", "action": "up", "keycode": AKEYCODE_HOME})
-        time.sleep(1)
-
-        print("Injecting text 'Hello Scrcpy'...")
-        send_cmd({"type": "inject_text", "text": "Hello Scrcpy"})
-
-        frame_saved = False
-        start_time = time.time()
-        # Run for 30 seconds
-        while time.time() - start_time < 30:
-            buf = shm.buf
-            # Header layout (Page 0):
-            # latest_index(0), num_slots(4), slot_data_size(8), reserved(12)
-            header_data = bytes(buf[:12])
-            latest_index, num_slots, slot_data_size = struct.unpack("III", header_data)
-
-            # Slot meta array starts at offset 16 in Page 0.
-            # Stride is 32 bytes per slot.
-            # struct sc_shm_slot_meta (offset 16+i*32):
-            # width(0), height(4), format(8), size(12), pts(16), seq(24), res(28)
-            slot_meta_offset = 16 + latest_index * 32
-            meta_data = bytes(buf[slot_meta_offset:slot_meta_offset + 28])
-            width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", meta_data)
-
-            if sequence != last_sequence:
-                if not frame_saved and data_size > 0:
-                    # Slot data starts at Page 1 + index * slot_data_size
-                    data_offset = PAGE_SIZE + latest_index * slot_data_size
-                    yuv_data = bytes(buf[data_offset:data_offset + data_size])
-                    save_ppm(width, height, yuv_data, "frame.ppm")
-                    frame_saved = True
-
-                last_sequence = sequence
-
-                # Update moving tracker overlay (ID 3)
-                # Fixed status bar (ID 1)
-                send_cmd({
-                    "type": "overlay_add",
-                    "item": {"id": 1, "type": "rect", "x": 500, "y": 500, "w": 9000, "h": 800, "r": 0, "g": 0, "b": 100, "a": 200, "filled": True}
-                })
-
-                # Dynamic text (ID 2)
-                send_cmd({
-                    "type": "overlay_add",
-                    "item": {"id": 2, "type": "text", "x": 1000, "y": 650, "size": 3, "text": f"BUF:{latest_index} SEQ:{sequence} PTS:{pts}", "r": 255, "g": 255, "b": 255, "a": 255}
-                })
-
-                # Moving circle (ID 3)
-                cx = 5000 + int(3000 * (time.time() % 2 - 1))
-                send_cmd({
-                    "type": "overlay_add",
-                    "item": {"id": 3, "type": "circle", "x": cx, "y": 5000, "radius": 400, "r": 255, "g": 255, "b": 0, "a": 200, "filled": True}
-                })
-
-                # Force refresh to see overlays even if screen doesn't update
-                send_cmd({"type": "render_refresh"})
-
-            time.sleep(0.01) # Poll faster
-
-    except KeyboardInterrupt:
-        pass
-    finally:
-        print("Cleaning up...")
-        try:
-            send_cmd({"type": "overlay_clear"})
-            send_cmd({"type": "render_refresh"})
-        except:
-            pass
-        shm.close()
+        finally:
+            self.running = False
+            # Break receive loop
+            try: self.sock.shutdown(socket.SHUT_RDWR)
+            except: pass
+            recv_thread.join()
+            self.send({"type": "overlay_clear"})
+            self.send({"type": "render_refresh"})
+            self.shm.close()
+            self.sock.close()
 
 if __name__ == "__main__":
-    main()
+    shm_n = sys.argv[1] if len(sys.argv) > 1 else "android"
+    sock_p = sys.argv[2] if len(sys.argv) > 2 else "/tmp/android.socket"
+    client = ScrcpyClient(shm_n, sock_p)
+    client.run()

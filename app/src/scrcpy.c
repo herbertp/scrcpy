@@ -819,6 +819,7 @@ aoa_complete:
             .kp = kp,
             .mp = mp,
             .gp = gp,
+            .api = api_server_initialized ? &s->api_server : NULL,
             .mouse_bindings = options->mouse_bindings,
             .legacy_paste = options->legacy_paste,
             .clipboard_autosync = options->clipboard_autosync,

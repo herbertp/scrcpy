@@ -4,6 +4,8 @@
 #include <sys/un.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <poll.h>
+#include <signal.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
@@ -169,6 +171,9 @@ static int
 run_api_server(void *data) {
     struct sc_api_server *api = data;
 
+    // Ignore SIGPIPE to handle client disconnections gracefully
+    signal(SIGPIPE, SIG_IGN);
+
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd == -1) {
         LOGE("API: Could not create socket");
@@ -196,32 +201,64 @@ run_api_server(void *data) {
     LOGI("API: Listening on %s", api->socket_path);
 
     char buffer[4096];
-    while (!api->stopped) {
-        struct timeval tv = {1, 0};
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(server_fd, &fds);
+    struct pollfd fds[SC_API_MAX_CLIENTS + 1];
 
-        int ret = select(server_fd + 1, &fds, NULL, NULL, &tv);
-        if (ret > 0) {
+    while (!api->stopped) {
+        fds[0].fd = server_fd;
+        fds[0].events = POLLIN;
+        int n_fds = 1;
+
+        sc_mutex_lock(&api->clients_mutex);
+        for (int i = 0; i < api->clients_count; i++) {
+            fds[n_fds].fd = api->client_fds[i];
+            fds[n_fds].events = POLLIN;
+            n_fds++;
+        }
+        sc_mutex_unlock(&api->clients_mutex);
+
+        int ret = poll(fds, n_fds, 1000); // 1s timeout
+        if (ret <= 0) continue;
+
+        // New client
+        if (fds[0].revents & POLLIN) {
             int client_fd = accept(server_fd, NULL, NULL);
             if (client_fd != -1) {
-                for (;;) {
-                    ssize_t n = read(client_fd, buffer, sizeof(buffer) - 1);
-                    if (n <= 0) {
-                        break;
-                    }
-                    buffer[n] = '\0';
+                sc_mutex_lock(&api->clients_mutex);
+                if (api->clients_count < SC_API_MAX_CLIENTS) {
+                    api->client_fds[api->clients_count++] = client_fd;
+                    LOGD("API: Client connected (%d)", client_fd);
+                } else {
+                    LOGW("API: Max clients reached, rejecting %d", client_fd);
+                    close(client_fd);
+                }
+                sc_mutex_unlock(&api->clients_mutex);
+            }
+        }
 
+        // Existing clients
+        for (int i = 1; i < n_fds; i++) {
+            if (fds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
+                ssize_t n = read(fds[i].fd, buffer, sizeof(buffer) - 1);
+                if (n <= 0) {
+                    // Disconnect
+                    LOGD("API: Client disconnected (%d)", fds[i].fd);
+                    close(fds[i].fd);
+                    sc_mutex_lock(&api->clients_mutex);
+                    // Remove from array (shift remaining)
+                    int client_idx = i - 1;
+                    for (int j = client_idx; j < api->clients_count - 1; j++) {
+                        api->client_fds[j] = api->client_fds[j + 1];
+                    }
+                    api->clients_count--;
+                    sc_mutex_unlock(&api->clients_mutex);
+                } else {
+                    buffer[n] = '\0';
                     char *ptr = buffer;
                     while (*ptr) {
                         const char *end;
-                        // Process one JSON object at a time from the buffer
                         cJSON *json = cJSON_ParseWithOpts(ptr, &end, false);
                         if (json) {
-                            cJSON_Delete(json); // we already have process_command but it parses again
-                            // Let's optimize: change process_command to accept cJSON*
-                            // For now, I'll just pass the string slice
+                            cJSON_Delete(json);
                             size_t len = end - ptr;
                             char *cmd = malloc(len + 1);
                             if (cmd) {
@@ -236,10 +273,16 @@ run_api_server(void *data) {
                         }
                     }
                 }
-                close(client_fd);
             }
         }
     }
+
+    sc_mutex_lock(&api->clients_mutex);
+    for (int i = 0; i < api->clients_count; i++) {
+        close(api->client_fds[i]);
+    }
+    api->clients_count = 0;
+    sc_mutex_unlock(&api->clients_mutex);
 
     close(server_fd);
     unlink(api->socket_path);
@@ -255,15 +298,21 @@ sc_api_server_init(struct sc_api_server *api, const char *socket_path,
     if (!api->socket_path) {
         return false;
     }
+    if (!sc_mutex_init(&api->clients_mutex)) {
+        free(api->socket_path);
+        return false;
+    }
     api->controller = controller;
     api->overlay = overlay;
     api->screen = screen;
     api->stopped = false;
+    api->clients_count = 0;
     return true;
 }
 
 void
 sc_api_server_destroy(struct sc_api_server *api) {
+    sc_mutex_destroy(&api->clients_mutex);
     free(api->socket_path);
 }
 
@@ -276,4 +325,20 @@ void
 sc_api_server_stop(struct sc_api_server *api) {
     api->stopped = true;
     sc_thread_join(&api->thread, NULL);
+}
+
+void
+sc_api_server_broadcast(struct sc_api_server *api, const char *json_str) {
+    sc_mutex_lock(&api->clients_mutex);
+    if (api->clients_count == 0) {
+        sc_mutex_unlock(&api->clients_mutex);
+        return;
+    }
+
+    size_t len = strlen(json_str);
+    for (int i = 0; i < api->clients_count; i++) {
+        // Best effort write
+        write(api->client_fds[i], json_str, len);
+    }
+    sc_mutex_unlock(&api->clients_mutex);
 }

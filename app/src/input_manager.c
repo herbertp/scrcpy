@@ -9,6 +9,8 @@
 #include "android/keycodes.h"
 #include "events.h"
 #include "input_events.h"
+#include "api_server.h"
+#include "util/cJSON.h"
 #include "screen.h"
 #include "shortcut_mod.h"
 #include "util/log.h"
@@ -26,6 +28,7 @@ sc_input_manager_init(struct sc_input_manager *im,
     im->controller = params->controller;
     im->fp = params->fp;
     im->screen = params->screen;
+    im->api = params->api;
     im->kp = params->kp;
     im->mp = params->mp;
     im->gp = params->gp;
@@ -1014,9 +1017,70 @@ sc_input_manager_process_file(struct sc_input_manager *im,
     }
 }
 
+static void
+sc_input_manager_mirror_event(struct sc_input_manager *im,
+                              const SDL_Event *event, bool intercepted) {
+    if (!im->api || im->api->clients_count == 0) {
+        return;
+    }
+
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddStringToObject(json, "type", "event_input");
+    cJSON_AddBoolToObject(json, "intercepted", intercepted);
+
+    cJSON *evt = cJSON_CreateObject();
+    switch (event->type) {
+        case SDL_KEYDOWN:
+        case SDL_KEYUP:
+            cJSON_AddStringToObject(evt, "type", "key");
+            cJSON_AddStringToObject(evt, "action", event->type == SDL_KEYDOWN ? "down" : "up");
+            cJSON_AddNumberToObject(evt, "keycode", (double)event->key.keysym.sym);
+            cJSON_AddNumberToObject(evt, "scancode", (double)event->key.keysym.scancode);
+            cJSON_AddNumberToObject(evt, "mod", (double)event->key.keysym.mod);
+            break;
+        case SDL_MOUSEMOTION:
+            cJSON_AddStringToObject(evt, "type", "mouse_motion");
+            cJSON_AddNumberToObject(evt, "x", (double)event->motion.x);
+            cJSON_AddNumberToObject(evt, "y", (double)event->motion.y);
+            break;
+        case SDL_MOUSEBUTTONDOWN:
+        case SDL_MOUSEBUTTONUP:
+            cJSON_AddStringToObject(evt, "type", "mouse_button");
+            cJSON_AddStringToObject(evt, "action", event->type == SDL_MOUSEBUTTONDOWN ? "down" : "up");
+            cJSON_AddNumberToObject(evt, "button", (double)event->button.button);
+            cJSON_AddNumberToObject(evt, "x", (double)event->button.x);
+            cJSON_AddNumberToObject(evt, "y", (double)event->button.y);
+            break;
+    }
+    cJSON_AddItemToObject(json, "event", evt);
+
+    char *json_str = cJSON_PrintUnformatted(json);
+    if (json_str) {
+        sc_api_server_broadcast(im->api, json_str);
+        free(json_str);
+    }
+    cJSON_Delete(json);
+}
+
 void
 sc_input_manager_handle_event(struct sc_input_manager *im,
                               const SDL_Event *event) {
+    bool intercepted = false;
+    if (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP ||
+        event->type == SDL_MOUSEMOTION || event->type == SDL_MOUSEBUTTONDOWN ||
+        event->type == SDL_MOUSEBUTTONUP) {
+
+        uint16_t mod = SDL_GetModState();
+        if (mod & KMOD_RALT) {
+            intercepted = true;
+        }
+        sc_input_manager_mirror_event(im, event, intercepted);
+
+        if (intercepted) {
+            return;
+        }
+    }
+
     if (im->block_input) {
         // Still allow quit and some special events
         if (event->type != SDL_QUIT && event->type != SC_EVENT_RUN_ON_MAIN_THREAD) {

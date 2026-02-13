@@ -7,6 +7,8 @@
 #include "overlay.h"
 #include "util/thread.h"
 
+#define SC_API_MAX_CLIENTS 8
+
 struct sc_api_server {
     char *socket_path;
     struct sc_controller *controller;
@@ -15,6 +17,10 @@ struct sc_api_server {
 
     sc_thread thread;
     bool stopped;
+
+    sc_mutex clients_mutex;
+    int client_fds[SC_API_MAX_CLIENTS];
+    int clients_count;
 };
 
 bool
@@ -31,5 +37,8 @@ sc_api_server_start(struct sc_api_server *api);
 
 void
 sc_api_server_stop(struct sc_api_server *api);
+
+void
+sc_api_server_broadcast(struct sc_api_server *api, const char *json_str);
 
 #endif
