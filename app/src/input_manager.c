@@ -1056,6 +1056,17 @@ sc_input_manager_mirror_event(struct sc_input_manager *im,
             cJSON_AddNumberToObject(evt, "x", (double)event->button.x);
             cJSON_AddNumberToObject(evt, "y", (double)event->button.y);
             break;
+        case SDL_MOUSEWHEEL: {
+            int mouse_x;
+            int mouse_y;
+            SDL_GetMouseState(&mouse_x, &mouse_y);
+            cJSON_AddStringToObject(evt, "type", "mouse_wheel");
+            cJSON_AddNumberToObject(evt, "x", (double)mouse_x);
+            cJSON_AddNumberToObject(evt, "y", (double)mouse_y);
+            cJSON_AddNumberToObject(evt, "hscroll", (double)event->wheel.x);
+            cJSON_AddNumberToObject(evt, "vscroll", (double)event->wheel.y);
+            break;
+        }
     }
     cJSON_AddItemToObject(json, "event", evt);
 
@@ -1074,7 +1085,7 @@ sc_input_manager_handle_event(struct sc_input_manager *im,
     bool intercepted = false;
     if (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP ||
         event->type == SDL_MOUSEMOTION || event->type == SDL_MOUSEBUTTONDOWN ||
-        event->type == SDL_MOUSEBUTTONUP) {
+        event->type == SDL_MOUSEBUTTONUP || event->type == SDL_MOUSEWHEEL) {
 
         uint16_t mod = SDL_GetModState();
         if (mod & KMOD_RALT) {
