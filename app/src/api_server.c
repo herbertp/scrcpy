@@ -226,7 +226,9 @@ run_api_server(void *data) {
                 sc_mutex_lock(&api->clients_mutex);
                 if (api->clients_count < SC_API_MAX_CLIENTS) {
                     api->client_fds[api->clients_count++] = client_fd;
-                    LOGD("API: Client connected (%d)", client_fd);
+                    LOGI("API: Client connected (%d)", client_fd);
+                    // Broadcast hello to new client
+                    sc_api_server_broadcast(api, "{\"type\":\"hello\",\"version\":\"scrcpy-ext\"}");
                 } else {
                     LOGW("API: Max clients reached, rejecting %d", client_fd);
                     close(client_fd);
@@ -336,9 +338,21 @@ sc_api_server_broadcast(struct sc_api_server *api, const char *json_str) {
     }
 
     size_t len = strlen(json_str);
+    char *buf = malloc(len + 2);
+    if (!buf) {
+        sc_mutex_unlock(&api->clients_mutex);
+        return;
+    }
+
+    memcpy(buf, json_str, len);
+    buf[len] = '\n';
+    buf[len + 1] = '\0';
+
     for (int i = 0; i < api->clients_count; i++) {
         // Best effort write
-        write(api->client_fds[i], json_str, len);
+        ssize_t ret = write(api->client_fds[i], buf, len + 1);
+        (void) ret;
     }
+    free(buf);
     sc_mutex_unlock(&api->clients_mutex);
 }

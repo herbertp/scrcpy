@@ -39,6 +39,8 @@ Enable with `--api-socket=<path>`.
 
 The socket listens for JSON-encoded commands and broadcasts JSON-encoded user events. Multiple commands can be sent over a single connection, and it should be kept open to receive event streams.
 
+**Important**: Every JSON message sent by the server is terminated by a **newline (`\n`)** character to facilitate line-based streaming.
+
 ### Outgoing Messages (Events from scrcpy)
 
 Whenever the user interacts with the scrcpy window, a message is broadcast to all connected clients.

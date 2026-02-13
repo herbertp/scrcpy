@@ -1056,6 +1056,7 @@ sc_input_manager_mirror_event(struct sc_input_manager *im,
 
     char *json_str = cJSON_PrintUnformatted(json);
     if (json_str) {
+        LOGD("API: Mirroring event: %s", json_str);
         sc_api_server_broadcast(im->api, json_str);
         free(json_str);
     }

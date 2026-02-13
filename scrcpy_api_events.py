@@ -18,44 +18,25 @@ def main():
 
     print("Connected! Listening for events... (Press Ctrl+C to stop)")
 
-    buffer = ""
     try:
-        while True:
-            data = sock.recv(4096)
-            if not data:
-                print("Connection closed by server.")
-                break
+        # Use makefile for robust line-by-line reading (handles fragmentation and multiple JSONs per packet)
+        f = sock.makefile('r', encoding='utf-8')
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
 
-            buffer += data.decode()
-
-            # Streaming JSON parser: find complete { ... } blocks
-            while "{" in buffer and "}" in buffer:
-                start = buffer.find("{")
-                count = 0
-                end = -1
-                for i in range(start, len(buffer)):
-                    if buffer[i] == "{":
-                        count += 1
-                    elif buffer[i] == "}":
-                        count -= 1
-                        if count == 0:
-                            end = i + 1
-                            break
-
-                if end != -1:
-                    msg_str = buffer[start:end]
-                    buffer = buffer[end:]
-                    try:
-                        msg = json.loads(msg_str)
-                        print(f"[{time.strftime('%H:%M:%S')}] {msg}")
-                    except json.JSONDecodeError as e:
-                        print(f"JSON Decode Error: {e}")
-                else:
-                    # Incomplete JSON object in buffer
-                    break
+            try:
+                msg = json.loads(line)
+                timestamp = time.strftime('%H:%M:%S')
+                print(f"[{timestamp}] {msg}")
+            except json.JSONDecodeError as e:
+                print(f"[{time.strftime('%H:%M:%S')}] JSON Decode Error: {e} | Data: {line}")
 
     except KeyboardInterrupt:
         print("\nExiting...")
+    except Exception as e:
+        print(f"Error during execution: {e}")
     finally:
         sock.close()
 
