@@ -2,16 +2,18 @@ import socket
 import json
 import sys
 import time
+import argparse
 
 def main():
-    socket_path = "/tmp/android.socket"
-    if len(sys.argv) > 1:
-        socket_path = sys.argv[1]
+    parser = argparse.ArgumentParser(description="scrcpy API event listener")
+    parser.add_argument("socket", nargs="?", default="/tmp/android.socket", help="Path to API socket")
+    parser.add_argument("--quiet", action="store_true", help="Hide mouse motion events (noisy)")
+    args = parser.parse_args()
 
-    print(f"Connecting to scrcpy API socket: {socket_path}")
+    print(f"Connecting to scrcpy API socket: {args.socket}")
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(socket_path)
+        sock.connect(args.socket)
     except Exception as e:
         print(f"Error connecting to socket: {e}")
         return
@@ -33,9 +35,8 @@ def main():
                     evt = msg["event"]
                     intercepted = " [INTERCEPTED]" if msg.get("intercepted") else ""
                     if evt["type"] == "mouse_motion":
-                        # Mouse motion can be very noisy, maybe uncomment if needed
-                        # print(f"[{timestamp}] User Mouse Move: ({evt['x']}, {evt['y']}){intercepted}")
-                        pass
+                        if not args.quiet:
+                            print(f"[{timestamp}] User Mouse Move: ({evt['x']}, {evt['y']}){intercepted}")
                     elif evt["type"] == "mouse_button":
                         print(f"[{timestamp}] User Mouse {evt['action'].upper()}: Button {evt['button']} at ({evt['x']}, {evt['y']}){intercepted}")
                     elif evt["type"] == "mouse_wheel":
