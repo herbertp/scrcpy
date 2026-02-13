@@ -862,6 +862,9 @@ aoa_complete:
             if (sc_api_server_init(&s->api_server, options->api_socket,
                                    controller, &s->overlay, &s->screen)) {
                 api_server_initialized = true;
+                if (screen_initialized) {
+                    s->screen.im.api = &s->api_server;
+                }
                 if (sc_api_server_start(&s->api_server)) {
                     api_server_started = true;
                 } else {

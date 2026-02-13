@@ -1020,7 +1020,12 @@ sc_input_manager_process_file(struct sc_input_manager *im,
 static void
 sc_input_manager_mirror_event(struct sc_input_manager *im,
                               const SDL_Event *event, bool intercepted) {
-    if (!im->api || im->api->clients_count == 0) {
+    if (!im->api) {
+        return;
+    }
+
+    if (im->api->clients_count == 0) {
+        LOGV("API: No clients connected, skipping event mirroring");
         return;
     }
 
