@@ -41,6 +41,13 @@ The socket listens for JSON-encoded commands and broadcasts JSON-encoded user ev
 
 **Important**: Every JSON message sent by the server is terminated by a **newline (`\n`)** character to facilitate line-based streaming.
 
+### Connection Handshake
+When a client connects, the server immediately sends a `hello` message:
+```json
+{"type":"hello","version":"scrcpy-ext","width":1080,"height":1920}
+```
+Use this to determine the device resolution for coordinate mapping.
+
 ### Outgoing Messages (Events from scrcpy)
 
 Whenever the user interacts with the scrcpy window, a message is broadcast to all connected clients.
@@ -51,11 +58,13 @@ Whenever the user interacts with the scrcpy window, a message is broadcast to al
       "type": "event_input",
       "intercepted": true|false,
       "event": {
-        "type": "key|mouse_motion|mouse_button",
+        "type": "key|mouse_motion|mouse_button|mouse_wheel",
         "action": "down|up",
         "keycode": <int>,
         "x": <int>,
         "y": <int>,
+        "frame_x": <int>,
+        "frame_y": <int>,
         ...
       }
     }
@@ -85,6 +94,14 @@ Whenever the user interacts with the scrcpy window, a message is broadcast to al
 
 #### Rendering
 *   **`render_refresh`**: Force a redraw of the scrcpy window immediately.
+
+## Example Scripts
+Check the `scripts/` directory for Python demonstrations:
+- `event_logger.py`: Monitor all events in real-time.
+- `mouse_overlay.py`: Follow the mouse with a color-changing overlay (uses Right-Alt interception).
+- `multitouch_demo.py`: Automated panning and pinch-zoom.
+- `shm_viewer.py`: Live scaled view using Shared Memory and Pygame.
+- `save_frame.py`: Save a single frame from SHM to a PPM file.
 
 ### Coordinates
 Coordinates in JSON commands are normalized [0, 10000]. Events from scrcpy use window-relative pixel coordinates.

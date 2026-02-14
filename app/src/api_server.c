@@ -89,10 +89,18 @@ process_command(struct sc_api_server *api, const char *json_str) {
     } else if (strcmp(type->valuestring, "inject_text") == 0) {
         cJSON *text = cJSON_GetObjectItemCaseSensitive(json, "text");
         if (cJSON_IsString(text)) {
-            struct sc_control_msg msg;
-            msg.type = SC_CONTROL_MSG_TYPE_INJECT_TEXT;
-            msg.inject_text.text = strdup(text->valuestring);
-            ok = api->controller && sc_controller_push_msg(api->controller, &msg);
+            char *text_dup = strdup(text->valuestring);
+            if (text_dup) {
+                struct sc_control_msg msg;
+                msg.type = SC_CONTROL_MSG_TYPE_INJECT_TEXT;
+                msg.inject_text.text = text_dup;
+                if (api->controller && sc_controller_push_msg(api->controller, &msg)) {
+                    ok = true;
+                } else {
+                    free(text_dup);
+                    ok = false;
+                }
+            }
         }
     } else if (strcmp(type->valuestring, "overlay_add") == 0) {
         cJSON *item_json = cJSON_GetObjectItemCaseSensitive(json, "item");
@@ -203,7 +211,6 @@ run_api_server(void *data) {
 
     LOGI("API: Listening on %s", api->socket_path);
 
-    char buffer[4096];
     struct pollfd fds[SC_API_MAX_CLIENTS + 1];
 
     while (!api->stopped) {
@@ -213,7 +220,7 @@ run_api_server(void *data) {
 
         sc_mutex_lock(&api->clients_mutex);
         for (int i = 0; i < api->clients_count; i++) {
-            fds[n_fds].fd = api->client_fds[i];
+            fds[n_fds].fd = api->clients[i].fd;
             fds[n_fds].events = POLLIN;
             n_fds++;
         }
@@ -228,10 +235,22 @@ run_api_server(void *data) {
             if (client_fd != -1) {
                 sc_mutex_lock(&api->clients_mutex);
                 if (api->clients_count < SC_API_MAX_CLIENTS) {
-                    api->client_fds[api->clients_count++] = client_fd;
+                    struct sc_api_client *client = &api->clients[api->clients_count++];
+                    client->fd = client_fd;
+                    client->buffer_pos = 0;
                     LOGI("API: Client connected (%d)", client_fd);
-                    // Broadcast hello to new client
-                    sc_api_server_broadcast(api, "{\"type\":\"hello\",\"version\":\"scrcpy-ext\"}");
+
+                    char hello[256];
+                    snprintf(hello, sizeof(hello),
+                             "{\"type\":\"hello\",\"version\":\"scrcpy-ext\",\"width\":%u,\"height\":%u}",
+                             api->screen->frame_size.width, api->screen->frame_size.height);
+
+                    // Send hello only to the new client
+                    size_t len = strlen(hello);
+                    hello[len] = '\n';
+                    hello[len + 1] = '\0';
+                    // Use non-blocking write for hello too
+                    send(client_fd, hello, len + 1, MSG_DONTWAIT);
                 } else {
                     LOGW("API: Max clients reached, rejecting %d", client_fd);
                     close(client_fd);
@@ -243,40 +262,44 @@ run_api_server(void *data) {
         // Existing clients
         for (int i = 1; i < n_fds; i++) {
             if (fds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
-                ssize_t n = read(fds[i].fd, buffer, sizeof(buffer) - 1);
+                int client_idx = i - 1;
+                sc_mutex_lock(&api->clients_mutex);
+                struct sc_api_client *client = &api->clients[client_idx];
+
+                ssize_t n = read(client->fd, client->buffer + client->buffer_pos,
+                                 SC_API_CLIENT_BUFFER_SIZE - client->buffer_pos - 1);
+
                 if (n <= 0) {
                     // Disconnect
-                    LOGD("API: Client disconnected (%d)", fds[i].fd);
-                    close(fds[i].fd);
-                    sc_mutex_lock(&api->clients_mutex);
+                    LOGD("API: Client disconnected (%d)", client->fd);
+                    close(client->fd);
                     // Remove from array (shift remaining)
-                    int client_idx = i - 1;
                     for (int j = client_idx; j < api->clients_count - 1; j++) {
-                        api->client_fds[j] = api->client_fds[j + 1];
+                        api->clients[j] = api->clients[j + 1];
                     }
                     api->clients_count--;
                     sc_mutex_unlock(&api->clients_mutex);
                 } else {
-                    buffer[n] = '\0';
-                    char *ptr = buffer;
-                    while (*ptr) {
-                        const char *end;
-                        cJSON *json = cJSON_ParseWithOpts(ptr, &end, false);
-                        if (json) {
-                            cJSON_Delete(json);
-                            size_t len = end - ptr;
-                            char *cmd = malloc(len + 1);
-                            if (cmd) {
-                                memcpy(cmd, ptr, len);
-                                cmd[len] = '\0';
-                                process_command(api, cmd);
-                                free(cmd);
-                            }
-                            ptr = (char *)end;
-                        } else {
-                            break;
-                        }
+                    client->buffer_pos += n;
+                    client->buffer[client->buffer_pos] = '\0';
+
+                    char *line_start = client->buffer;
+                    char *newline;
+                    while ((newline = strchr(line_start, '\n'))) {
+                        *newline = '\0';
+                        process_command(api, line_start);
+                        line_start = newline + 1;
                     }
+
+                    // Shift remaining data to start of buffer
+                    size_t remaining = client->buffer + client->buffer_pos - line_start;
+                    if (remaining > 0) {
+                        memmove(client->buffer, line_start, remaining);
+                        client->buffer_pos = remaining;
+                    } else {
+                        client->buffer_pos = 0;
+                    }
+                    sc_mutex_unlock(&api->clients_mutex);
                 }
             }
         }
@@ -284,7 +307,7 @@ run_api_server(void *data) {
 
     sc_mutex_lock(&api->clients_mutex);
     for (int i = 0; i < api->clients_count; i++) {
-        close(api->client_fds[i]);
+        close(api->clients[i].fd);
     }
     api->clients_count = 0;
     sc_mutex_unlock(&api->clients_mutex);
@@ -352,8 +375,8 @@ sc_api_server_broadcast(struct sc_api_server *api, const char *json_str) {
     buf[len + 1] = '\0';
 
     for (int i = 0; i < api->clients_count; i++) {
-        // Best effort write
-        ssize_t ret = write(api->client_fds[i], buf, len + 1);
+        // Best effort non-blocking write
+        ssize_t ret = send(api->clients[i].fd, buf, len + 1, MSG_DONTWAIT);
         (void) ret;
     }
     free(buf);

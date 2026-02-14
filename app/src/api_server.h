@@ -8,6 +8,13 @@
 #include "util/thread.h"
 
 #define SC_API_MAX_CLIENTS 8
+#define SC_API_CLIENT_BUFFER_SIZE 8192
+
+struct sc_api_client {
+    int fd;
+    char buffer[SC_API_CLIENT_BUFFER_SIZE];
+    size_t buffer_pos;
+};
 
 struct sc_api_server {
     char *socket_path;
@@ -19,7 +26,7 @@ struct sc_api_server {
     bool stopped;
 
     sc_mutex clients_mutex;
-    int client_fds[SC_API_MAX_CLIENTS];
+    struct sc_api_client clients[SC_API_MAX_CLIENTS];
     int clients_count;
 };
 

@@ -1043,26 +1043,37 @@ sc_input_manager_mirror_event(struct sc_input_manager *im,
             cJSON_AddNumberToObject(evt, "scancode", (double)event->key.keysym.scancode);
             cJSON_AddNumberToObject(evt, "mod", (double)event->key.keysym.mod);
             break;
-        case SDL_MOUSEMOTION:
+        case SDL_MOUSEMOTION: {
+            struct sc_point p = sc_screen_convert_window_to_frame_coords(im->screen, event->motion.x, event->motion.y);
             cJSON_AddStringToObject(evt, "type", "mouse_motion");
             cJSON_AddNumberToObject(evt, "x", (double)event->motion.x);
             cJSON_AddNumberToObject(evt, "y", (double)event->motion.y);
+            cJSON_AddNumberToObject(evt, "frame_x", (double)p.x);
+            cJSON_AddNumberToObject(evt, "frame_y", (double)p.y);
             break;
+        }
         case SDL_MOUSEBUTTONDOWN:
-        case SDL_MOUSEBUTTONUP:
+        case SDL_MOUSEBUTTONUP: {
+            struct sc_point p = sc_screen_convert_window_to_frame_coords(im->screen, event->button.x, event->button.y);
             cJSON_AddStringToObject(evt, "type", "mouse_button");
             cJSON_AddStringToObject(evt, "action", event->type == SDL_MOUSEBUTTONDOWN ? "down" : "up");
             cJSON_AddNumberToObject(evt, "button", (double)event->button.button);
             cJSON_AddNumberToObject(evt, "x", (double)event->button.x);
             cJSON_AddNumberToObject(evt, "y", (double)event->button.y);
+            cJSON_AddNumberToObject(evt, "frame_x", (double)p.x);
+            cJSON_AddNumberToObject(evt, "frame_y", (double)p.y);
             break;
+        }
         case SDL_MOUSEWHEEL: {
             int mouse_x;
             int mouse_y;
             SDL_GetMouseState(&mouse_x, &mouse_y);
+            struct sc_point p = sc_screen_convert_window_to_frame_coords(im->screen, mouse_x, mouse_y);
             cJSON_AddStringToObject(evt, "type", "mouse_wheel");
             cJSON_AddNumberToObject(evt, "x", (double)mouse_x);
             cJSON_AddNumberToObject(evt, "y", (double)mouse_y);
+            cJSON_AddNumberToObject(evt, "frame_x", (double)p.x);
+            cJSON_AddNumberToObject(evt, "frame_y", (double)p.y);
             cJSON_AddNumberToObject(evt, "hscroll", (double)event->wheel.x);
             cJSON_AddNumberToObject(evt, "vscroll", (double)event->wheel.y);
             break;
