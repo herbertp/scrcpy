@@ -49,15 +49,18 @@ def main():
     shm = shared_memory.SharedMemory(name=name_for_py)
     resource_tracker.unregister(shm._name, "shared_memory")
 
-    buf = shm.buf
-    latest_index, num_slots, slot_data_size = struct.unpack("III", bytes(buf[:12]))
-    meta_offset = 16 + latest_index * 32
-    width, height, fmt, data_size = struct.unpack("IIII", bytes(buf[meta_offset:meta_offset + 16]))
+    try:
+        buf = shm.buf
+        latest_index, num_slots, slot_data_size = struct.unpack("III", bytes(buf[:12]))
+        meta_offset = 16 + latest_index * 32
+        width, height, fmt, data_size = struct.unpack("IIII", bytes(buf[meta_offset:meta_offset + 16]))
 
-    data_offset = 4096 + latest_index * slot_data_size
-    save_ppm(width, height, bytes(buf[data_offset:data_offset+data_size]), "snapshot.ppm")
-
-    shm.close()
+        data_offset = 4096 + latest_index * slot_data_size
+        save_ppm(width, height, bytes(buf[data_offset:data_offset+data_size]), "snapshot.ppm")
+    finally:
+        # Clear references to buffer before closing
+        buf = None
+        shm.close()
 
 if __name__ == "__main__":
     main()

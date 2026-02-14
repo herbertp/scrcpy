@@ -1099,7 +1099,11 @@ sc_input_manager_handle_event(struct sc_input_manager *im,
         event->type == SDL_MOUSEBUTTONUP || event->type == SDL_MOUSEWHEEL) {
 
         uint16_t mod = SDL_GetModState();
-        if (mod & KMOD_RALT) {
+        // Also check KMOD_MODE (AltGr) and explicit keys in case state is not yet updated
+        if ((mod & (KMOD_RALT | KMOD_MODE)) ||
+                ((event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
+                 (event->key.keysym.sym == SDLK_RALT ||
+                  event->key.keysym.sym == SDLK_MODE))) {
             intercepted = true;
         }
         sc_input_manager_mirror_event(im, event, intercepted);

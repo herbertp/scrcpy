@@ -54,19 +54,28 @@ def main():
 
     print(f"SHM Viewer Active. Scaling factor: {scale_factor}. Press 'Q' or close window to exit.")
 
+    # Pre-declare variables to clear them in finally block
+    raw_data = None
+    y_plane = None
+    u_plane = None
+    v_plane = None
+    buf = None
+
     try:
+        # Get a single view of the buffer to avoid repeated export increments
+        buf = shm.buf
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     running = False
 
             # Read Global Header
-            header_data = bytes(shm.buf[:12])
+            header_data = bytes(buf[:12])
             latest_index, num_slots, slot_data_size = struct.unpack("III", header_data)
 
             # Read Slot Metadata
             meta_offset = 16 + latest_index * 32
-            meta_data = bytes(shm.buf[meta_offset:meta_offset + 28])
+            meta_data = bytes(buf[meta_offset:meta_offset + 28])
             width, height, fmt, data_size, pts, sequence = struct.unpack("IIIIQI", meta_data)
 
             if sequence != last_sequence and data_size > 0:
@@ -74,7 +83,7 @@ def main():
 
                 # Extract YUV planes
                 data_offset = PAGE_SIZE + latest_index * slot_data_size
-                raw_data = shm.buf[data_offset:data_offset + data_size]
+                raw_data = buf[data_offset:data_offset + data_size]
 
                 y_size = width * height
                 uv_w, uv_h = (width + 1) // 2, (height + 1) // 2
@@ -98,11 +107,21 @@ def main():
                 screen.blit(scaled_surface, (0, 0))
                 pygame.display.flip()
 
+                # We can't easily clear these here as they are needed for the loop,
+                # but they will be cleared in finally.
+
             time.sleep(0.01)
 
     except KeyboardInterrupt:
         pass
     finally:
+        # CRITICAL: Clear all references to the SHM buffer before closing it,
+        # otherwise Python will raise "BufferError: cannot close exported pointers exist"
+        raw_data = None
+        y_plane = None
+        u_plane = None
+        v_plane = None
+        buf = None
         pygame.quit()
         shm.close()
 
