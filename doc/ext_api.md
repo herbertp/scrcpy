@@ -65,7 +65,13 @@ Whenever the user interacts with the scrcpy window, a message is broadcast to al
 ### Incoming Messages (Commands to scrcpy)
 
 #### Input Injection
-*   **`inject_touch`**: Send a touch event. action: `down`, `up`, or `move`. x/y: 0..10000.
+*   **`inject_touch`**: Send a touch event.
+    - `action`: `"down"`, `"up"`, `"move"`, or `"cancel"`.
+    - `x`, `y`: Position [0, 10000].
+    - `pointer_id` (optional): Unique ID for the pointer. Defaults to `-2` (Generic Finger).
+    - `pressure` (optional): 0.0 to 1.0. Defaults to 1.0.
+    - **Multi-touch**: To simulate multiple fingers, send events with different `pointer_id`s. The server handles `ACTION_POINTER_DOWN/UP` conversion automatically.
+    - **Special IDs**: `-1` (Mouse), `-2` (Generic Finger), `-3` (Virtual Finger).
 *   **`inject_keycode`**: Send a key event. keycode: Android keycode.
 *   **`inject_text`**: Inject raw text string.
 *   **`block_input`**: Block/unblock all physical user input.

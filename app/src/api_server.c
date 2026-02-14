@@ -55,10 +55,13 @@ process_command(struct sc_api_server *api, const char *json_str) {
                 msg.inject_touch_event.action = AMOTION_EVENT_ACTION_DOWN;
             else if (strcmp(action->valuestring, "up") == 0)
                 msg.inject_touch_event.action = AMOTION_EVENT_ACTION_UP;
+            else if (strcmp(action->valuestring, "cancel") == 0)
+                msg.inject_touch_event.action = AMOTION_EVENT_ACTION_CANCEL;
             else
                 msg.inject_touch_event.action = AMOTION_EVENT_ACTION_MOVE;
 
-            msg.inject_touch_event.pointer_id = cJSON_IsNumber(id) ? id->valuedouble : SC_POINTER_ID_MOUSE;
+            // Default to SC_POINTER_ID_GENERIC_FINGER if not specified
+            msg.inject_touch_event.pointer_id = cJSON_IsNumber(id) ? (uint64_t)id->valuedouble : SC_POINTER_ID_GENERIC_FINGER;
             msg.inject_touch_event.position.screen_size = api->screen->frame_size;
             msg.inject_touch_event.position.point.x = x->valuedouble * api->screen->frame_size.width / 10000;
             msg.inject_touch_event.position.point.y = y->valuedouble * api->screen->frame_size.height / 10000;

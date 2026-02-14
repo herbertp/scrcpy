@@ -73,10 +73,31 @@ class ScrcpyClient:
         self.sock.setblocking(False)
 
     def send(self, cmd):
-        data = json.dumps(cmd).encode()
+        data = (json.dumps(cmd) + "\n").encode()
         self.sock.setblocking(True)
         self.sock.sendall(data)
         self.sock.setblocking(False)
+
+    def demo_pinch_zoom(self):
+        print("Executing Pinch Zoom demo...")
+        # Finger 1 down at center-left
+        self.send({"type": "inject_touch", "action": "down", "x": 4000, "y": 5000, "pointer_id": 100})
+        # Finger 2 down at center-right
+        self.send({"type": "inject_touch", "action": "down", "x": 6000, "y": 5000, "pointer_id": 101})
+        time.sleep(0.1)
+
+        # Move apart
+        steps = 20
+        for i in range(steps):
+            self.send({"type": "inject_touch", "action": "move", "x": 4000 - i*100, "y": 5000, "pointer_id": 100})
+            self.send({"type": "inject_touch", "action": "move", "x": 6000 + i*100, "y": 5000, "pointer_id": 101})
+            time.sleep(0.02)
+
+        time.sleep(0.1)
+        # Up
+        self.send({"type": "inject_touch", "action": "up", "x": 4000 - steps*100, "y": 5000, "pointer_id": 100})
+        self.send({"type": "inject_touch", "action": "up", "x": 6000 + steps*100, "y": 5000, "pointer_id": 101})
+        print("Pinch Zoom demo complete.")
 
     def receive_loop(self):
         buffer = ""
@@ -113,6 +134,8 @@ class ScrcpyClient:
                                     print(f"User Mouse {evt['action'].upper()}: Button {evt['button']} at ({evt['x']}, {evt['y']}){intercepted}")
                                 elif evt["type"] == "key":
                                     print(f"User Key {evt['action'].upper()}: Code {evt['keycode']}{intercepted}")
+                                    if evt["action"] == "down" and evt["keycode"] == 44: # 'P' key
+                                        threading.Thread(target=self.demo_pinch_zoom).start()
                         except json.JSONDecodeError:
                             pass
                     else:
