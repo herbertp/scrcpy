@@ -25,11 +25,10 @@ def main():
     def send_cmd(cmd):
         sock.sendall((json.dumps(cmd) + "\n").encode())
 
-    # Keep track of circle color
-    # Yellow: (255, 255, 0)
-    # Red: (255, 0, 0)
-    # Green: (0, 255, 0)
-    current_color = (255, 255, 0)
+    # Keep track of circle color and position
+    current_color = (255, 255, 0) # Yellow
+    last_nx, last_ny = 5000, 5000
+    is_down = False
 
     buffer = ""
     try:
@@ -52,43 +51,48 @@ def main():
                     evt = msg["event"]
                     intercepted = msg.get("intercepted", False)
 
-                    if evt["type"] in ["mouse_motion", "mouse_button"]:
+                    # Track position and state
+                    if evt["type"] in ["mouse_motion", "mouse_button", "mouse_wheel"]:
                         fx = evt.get("frame_x")
                         fy = evt.get("frame_y")
-
                         if fx is not None and fy is not None:
-                            # Map frame coords to normalized 0-10000
-                            nx = int(fx * 10000 / width)
-                            ny = int(fy * 10000 / height)
+                            last_nx = int(fx * 10000 / width)
+                            last_ny = int(fy * 10000 / height)
 
-                            if evt["type"] == "mouse_button":
-                                action = evt["action"]
-                                if intercepted:
-                                    if action == "down":
-                                        current_color = (255, 0, 0) # Red
-                                    else:
-                                        current_color = (0, 255, 0) # Green
-                                else:
-                                    current_color = (255, 255, 0) # Yellow
+                        if evt["type"] == "mouse_button":
+                            is_down = (evt["action"] == "down")
 
-                            # Update overlay
-                            send_cmd({
-                                "type": "overlay_add",
-                                "item": {
-                                    "id": 99,
-                                    "type": "circle",
-                                    "x": nx,
-                                    "y": ny,
-                                    "radius": 50,
-                                    "r": current_color[0],
-                                    "g": current_color[1],
-                                    "b": current_color[2],
-                                    "a": 128,
-                                    "filled": True
-                                }
-                            })
-                            # Refresh screen to show it immediately
-                            send_cmd({"type": "render_refresh"})
+                    # Determine color
+                    if not intercepted:
+                        current_color = (255, 255, 0) # Yellow
+                    else:
+                        # Intercepted mode active
+                        if is_down:
+                            current_color = (255, 0, 0) # Red
+                        elif evt.get("type") == "mouse_button" and evt.get("action") == "up":
+                            current_color = (0, 255, 0) # Green
+                        elif current_color == (255, 255, 0):
+                            # Just entered intercept mode from normal
+                            current_color = (0, 255, 255) # Cyan (Ready)
+
+                    # Always update overlay position and color on every event
+                    send_cmd({
+                        "type": "overlay_add",
+                        "item": {
+                            "id": 99,
+                            "type": "circle",
+                            "x": last_nx,
+                            "y": last_ny,
+                            "radius": 50,
+                            "r": current_color[0],
+                            "g": current_color[1],
+                            "b": current_color[2],
+                            "a": 128,
+                            "filled": True
+                        }
+                    })
+                    # Refresh screen to show it immediately
+                    send_cmd({"type": "render_refresh"})
 
     except KeyboardInterrupt:
         pass
