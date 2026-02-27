@@ -19,6 +19,7 @@ struct sc_input_manager {
     struct sc_controller *controller;
     struct sc_file_pusher *fp;
     struct sc_screen *screen;
+    struct sc_api_server *api;
 
     struct sc_key_processor *kp;
     struct sc_mouse_processor *mp;
@@ -44,12 +45,14 @@ struct sc_input_manager {
     uint16_t last_mod;
 
     uint64_t next_sequence; // used for request acknowledgements
+    bool block_input;
 };
 
 struct sc_input_manager_params {
     struct sc_controller *controller;
     struct sc_file_pusher *fp;
     struct sc_screen *screen;
+    struct sc_api_server *api;
     struct sc_key_processor *kp;
     struct sc_mouse_processor *mp;
     struct sc_gamepad_processor *gp;

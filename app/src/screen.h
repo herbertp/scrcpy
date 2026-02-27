@@ -17,6 +17,7 @@
 #include "frame_buffer.h"
 #include "input_manager.h"
 #include "mouse_capture.h"
+#include "overlay.h"
 #include "options.h"
 #include "trait/key_processor.h"
 #include "trait/frame_sink.h"
@@ -34,6 +35,7 @@ struct sc_screen {
     struct sc_display display;
     struct sc_input_manager im;
     struct sc_mouse_capture mc; // only used in mouse relative mode
+    struct sc_overlay *overlay;
     struct sc_frame_buffer fb;
     struct sc_fps_counter fps_counter;
 
@@ -79,6 +81,7 @@ struct sc_screen_params {
     struct sc_key_processor *kp;
     struct sc_mouse_processor *mp;
     struct sc_gamepad_processor *gp;
+    struct sc_api_server *api;
 
     struct sc_mouse_bindings mouse_bindings;
     bool legacy_paste;
@@ -146,6 +149,10 @@ sc_screen_set_orientation(struct sc_screen *screen,
 // set the display pause state
 void
 sc_screen_set_paused(struct sc_screen *screen, bool paused);
+
+// force a redraw of the current frame and overlays
+void
+sc_screen_refresh(struct sc_screen *screen);
 
 // react to SDL events
 // If this function returns false, scrcpy must exit with an error.

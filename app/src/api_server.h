@@ -1,0 +1,51 @@
+#ifndef SC_API_SERVER_H
+#define SC_API_SERVER_H
+
+#include "common.h"
+#include <stdbool.h>
+#include "controller.h"
+#include "overlay.h"
+#include "util/thread.h"
+
+#define SC_API_MAX_CLIENTS 8
+#define SC_API_CLIENT_BUFFER_SIZE 8192
+
+struct sc_api_client {
+    int fd;
+    char buffer[SC_API_CLIENT_BUFFER_SIZE];
+    size_t buffer_pos;
+};
+
+struct sc_api_server {
+    char *socket_path;
+    struct sc_controller *controller;
+    struct sc_overlay *overlay;
+    struct sc_screen *screen;
+
+    sc_thread thread;
+    bool stopped;
+
+    sc_mutex clients_mutex;
+    struct sc_api_client clients[SC_API_MAX_CLIENTS];
+    int clients_count;
+};
+
+bool
+sc_api_server_init(struct sc_api_server *api, const char *socket_path,
+                   struct sc_controller *controller,
+                   struct sc_overlay *overlay,
+                   struct sc_screen *screen);
+
+void
+sc_api_server_destroy(struct sc_api_server *api);
+
+bool
+sc_api_server_start(struct sc_api_server *api);
+
+void
+sc_api_server_stop(struct sc_api_server *api);
+
+void
+sc_api_server_broadcast(struct sc_api_server *api, const char *json_str);
+
+#endif

@@ -114,6 +114,8 @@ enum {
     OPT_NO_VD_SYSTEM_DECORATIONS,
     OPT_NO_VD_DESTROY_CONTENT,
     OPT_DISPLAY_IME_POLICY,
+    OPT_API_SOCKET,
+    OPT_SHM_NAME,
 };
 
 struct sc_option {
@@ -397,6 +399,18 @@ static const struct sc_option options[] = {
                 "\"fallback\" means that the IME should appear on a fallback "
                 "display (the default display).\n"
                 "\"hide\" means that the IME should be hidden.",
+    },
+    {
+        .longopt_id = OPT_API_SOCKET,
+        .longopt = "api-socket",
+        .argdesc = "path",
+        .text = "Listen for JSON commands on a Unix domain socket.",
+    },
+    {
+        .longopt_id = OPT_SHM_NAME,
+        .longopt = "shm-name",
+        .argdesc = "name",
+        .text = "Expose decoded frames in a POSIX shared memory segment.",
     },
     {
         .longopt_id = OPT_DISPLAY_ORIENTATION,
@@ -2820,6 +2834,12 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                                               &opts->display_ime_policy)) {
                     return false;
                 }
+                break;
+            case OPT_API_SOCKET:
+                opts->api_socket = optarg;
+                break;
+            case OPT_SHM_NAME:
+                opts->shm_name = optarg;
                 break;
             default:
                 // getopt prints the error message on stderr

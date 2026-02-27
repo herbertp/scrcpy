@@ -216,6 +216,13 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
     enum sc_display_result res =
         sc_display_render(&screen->display, &screen->rect, screen->orientation);
     (void) res; // any error already logged
+
+    if (screen->overlay) {
+        sc_overlay_render(screen->overlay, screen->display.renderer,
+                          &screen->rect);
+    }
+
+    SDL_RenderPresent(screen->display.renderer);
 }
 
 static void
@@ -223,6 +230,8 @@ sc_screen_render_novideo(struct sc_screen *screen) {
     enum sc_display_result res =
         sc_display_render(&screen->display, NULL, SC_ORIENTATION_0);
     (void) res; // any error already logged
+
+    SDL_RenderPresent(screen->display.renderer);
 }
 
 #if defined(__APPLE__) || defined(_WIN32)
@@ -335,6 +344,7 @@ sc_screen_init(struct sc_screen *screen,
     screen->orientation = SC_ORIENTATION_0;
 
     screen->video = params->video;
+    screen->overlay = NULL;
 
     screen->req.x = params->window_x;
     screen->req.y = params->window_y;
@@ -436,6 +446,7 @@ sc_screen_init(struct sc_screen *screen,
         .kp = params->kp,
         .mp = params->mp,
         .gp = params->gp,
+        .api = params->api,
         .mouse_bindings = params->mouse_bindings,
         .legacy_paste = params->legacy_paste,
         .clipboard_autosync = params->clipboard_autosync,
@@ -703,6 +714,13 @@ sc_screen_update_frame(struct sc_screen *screen) {
     av_frame_unref(screen->frame);
     sc_frame_buffer_consume(&screen->fb, screen->frame);
     return sc_screen_apply_frame(screen);
+}
+
+void
+sc_screen_refresh(struct sc_screen *screen) {
+    if (screen->has_frame) {
+        sc_screen_render(screen, false);
+    }
 }
 
 void
